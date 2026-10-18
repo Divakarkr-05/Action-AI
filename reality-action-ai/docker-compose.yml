@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────
+# REALITY → ACTION AI — Production Docker Compose
+# Architecture: React/Vite (Nginx) + FastAPI (Uvicorn)
+# ─────────────────────────────────────────────────────────────
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: reality-action-ai-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - AI_MODE=${AI_MODE:-sarvam}
+      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - SARVAM_MODEL=${SARVAM_MODEL:-gemma4}
+      - SARVAM_BASE_URL=${SARVAM_BASE_URL:-https://api.sarvam.ai/v2}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_MODEL=${HF_MODEL:-google/gemma-4-31B-it}
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-10}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - reality-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL:-}
+        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY:-}
+        - VITE_GRAPHQL_URL=${VITE_GRAPHQL_URL:-http://localhost:8001/graphql}
+    container_name: reality-action-ai-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - reality-network
+
+networks:
+  reality-network:
+    driver: bridge
