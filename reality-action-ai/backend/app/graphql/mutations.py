@@ -20,10 +20,13 @@ from app.graphql.schema import (
     AnalysisResultType,
     ClearSessionResultType,
     DeleteAnalysisResultType,
+    DiagnosticCaseType,
     EmergencyResponseType,
     FollowUpResultType,
     HelplineType,
     SaveAnalysisResultType,
+    VisualFaultType,
+    case_model_to_graphql_type,
 )
 from app.config.settings import get_settings
 from app.middleware.auth import get_user_id_from_request
@@ -226,6 +229,22 @@ class Mutation:
                 ],
             )
 
+        visual_fault_types: Optional[list[VisualFaultType]] = None
+        if result.visual_faults:
+            visual_fault_types = [
+                VisualFaultType(
+                    id=f.id,
+                    component_label=f.component_label,
+                    description=f.description,
+                    severity=f.severity,
+                    ymin=f.ymin,
+                    xmin=f.xmin,
+                    ymax=f.ymax,
+                    xmax=f.xmax,
+                )
+                for f in result.visual_faults
+            ]
+
         return AnalysisResultType(
             what_i_see=sanitized_what_i_see,
             what_is_happening=sanitized_what_is_happening,
@@ -234,6 +253,7 @@ class Mutation:
             confidence=result.confidence,
             safety_warning=sanitized_warning,
             grounding_sources=result.grounding_sources,
+            visual_faults=visual_fault_types,
             image_authenticity=valid_status,
             ai_generated_probability=valid_prob,
             authenticity_confidence=valid_conf,
@@ -405,3 +425,186 @@ class Mutation:
             session_id=session_id.strip(),
             message="Temporary session purged." if cleared else "Session not found or already expired.",
         )
+
+    # ── Diagnostic Intelligence Engine Mutations ─────────────────────────────
+
+    @strawberry.mutation(
+        description="Initialize a complete closed-loop Diagnostic Case from an uploaded image."
+    )
+    async def create_diagnostic_case(
+        self,
+        info: Info,
+        image: str,
+        question: Optional[str] = strawberry.UNSET,
+        session_id: Optional[str] = strawberry.UNSET,
+    ) -> DiagnosticCaseType:
+        if not image or len(image) < 10:
+            raise ValueError("image must be a non-empty base-64 encoded string.")
+
+        # Strip data URL prefix
+        if "," in image:
+            image_raw = image.split(",", 1)[1]
+        else:
+            image_raw = image
+
+        raw_bytes = base64.b64decode(image_raw, validate=True)
+
+        # Enforce size limit
+        settings = get_settings()
+        if len(raw_bytes) > settings.max_upload_size_bytes:
+            raise ValueError(f"Image payload size exceeds {settings.max_upload_size_mb} MB limit.")
+
+        # Magic byte validation
+        is_png = raw_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        is_jpeg = raw_bytes.startswith(b"\xff\xd8\xff")
+        is_webp = len(raw_bytes) >= 12 and raw_bytes.startswith(b"RIFF") and raw_bytes[8:12] == b"WEBP"
+        if not (is_png or is_jpeg or is_webp):
+            raise ValueError("Invalid image format. Only JPEG, PNG, and WebP are accepted.")
+
+        request = info.context["request"]
+        user_id = get_user_id_from_request(request)
+        sess_id = session_id if session_id is not strawberry.UNSET and session_id else "default_session"
+
+        # If unauthenticated, use session-scoped isolation
+        effective_user_id = user_id if user_id else f"anon_{sess_id}"
+
+        from app.diagnostic.engine import DiagnosticEngine
+        from app.diagnostic.case_service import get_diagnostic_case_service
+
+        image_data_url = image if image.startswith("data:") else f"data:image/jpeg;base64,{image_raw}"
+        case = await DiagnosticEngine.create_case_from_image(
+            image_b64=image_raw,
+            user_id=effective_user_id,
+            session_id=sess_id,
+            question=question if question is not strawberry.UNSET else None,
+            image_url=image_data_url,
+        )
+
+        saved_case = await get_diagnostic_case_service().create_case(case)
+        return case_model_to_graphql_type(saved_case)
+
+    @strawberry.mutation(
+        description="Submit a physical test measurement to update diagnostic hypotheses and confidence."
+    )
+    async def submit_diagnostic_test(
+        self,
+        info: Info,
+        case_id: str,
+        test_id: str,
+        result_type: str,
+        numeric_value: Optional[float] = strawberry.UNSET,
+        unit: Optional[str] = strawberry.UNSET,
+        text_value: Optional[str] = strawberry.UNSET,
+        outcome_selection: Optional[str] = strawberry.UNSET,
+        notes: Optional[str] = strawberry.UNSET,
+    ) -> DiagnosticCaseType:
+        from app.diagnostic.models import is_valid_uuid
+        if not is_valid_uuid(case_id):
+            raise ValueError(f"INVALID_CASE_ID: '{case_id}' is not a valid UUID.")
+
+        request = info.context["request"]
+        user_id = get_user_id_from_request(request)
+
+        from app.diagnostic.case_service import get_diagnostic_case_service
+        from app.diagnostic.engine import DiagnosticEngine
+        from app.diagnostic.models import TestResultSubmission
+
+        case_svc = get_diagnostic_case_service()
+
+        effective_user_id = user_id if user_id else "anon_default_session"
+        case = await case_svc.get_case(effective_user_id, case_id)
+        if not case and not user_id:
+            for uid, user_cases in case_svc._cases.items():
+                if uid.startswith("anon_") and case_id in user_cases:
+                    case = user_cases[case_id]
+                    effective_user_id = uid
+                    break
+
+        if not case:
+            raise ValueError(f"Diagnostic case '{case_id}' not found or access denied.")
+
+        submission = TestResultSubmission(
+            test_id=test_id,
+            result_type=result_type,  # type: ignore
+            numeric_value=numeric_value if numeric_value is not strawberry.UNSET else None,
+            unit=unit if unit is not strawberry.UNSET else None,
+            text_value=text_value if text_value is not strawberry.UNSET else None,
+            outcome_selection=outcome_selection if outcome_selection is not strawberry.UNSET else None,
+            notes=notes if notes is not strawberry.UNSET else None,
+        )
+
+        updated_case, _ = await DiagnosticEngine.interpret_test_result(case, submission)
+        saved = await case_svc.update_case(updated_case)
+        return case_model_to_graphql_type(saved)
+
+    @strawberry.mutation(
+        description="Verify physical repair by comparing post-repair image against the diagnostic baseline."
+    )
+    async def verify_repair(
+        self,
+        info: Info,
+        case_id: str,
+        after_image: str,
+    ) -> DiagnosticCaseType:
+        from app.diagnostic.models import is_valid_uuid
+        if not is_valid_uuid(case_id):
+            raise ValueError(f"INVALID_CASE_ID: '{case_id}' is not a valid UUID.")
+
+        if not after_image or len(after_image) < 10:
+            raise ValueError("after_image must be a non-empty base-64 encoded string.")
+
+        if "," in after_image:
+            after_raw = after_image.split(",", 1)[1]
+        else:
+            after_raw = after_image
+
+        request = info.context["request"]
+        user_id = get_user_id_from_request(request)
+
+        from app.diagnostic.case_service import get_diagnostic_case_service
+        from app.diagnostic.engine import DiagnosticEngine
+
+        case_svc = get_diagnostic_case_service()
+        effective_user_id = user_id if user_id else "anon_default_session"
+        case = await case_svc.get_case(effective_user_id, case_id)
+        if not case and not user_id:
+            for uid, user_cases in case_svc._cases.items():
+                if uid.startswith("anon_") and case_id in user_cases:
+                    case = user_cases[case_id]
+                    effective_user_id = uid
+                    break
+
+        if not case:
+            raise ValueError(f"Diagnostic case '{case_id}' not found or access denied.")
+
+        after_data_url = after_image if after_image.startswith("data:") else f"data:image/jpeg;base64,{after_raw}"
+        updated_case, _ = await DiagnosticEngine.verify_repair(case, after_raw, after_image_url=after_data_url)
+        saved = await case_svc.update_case(updated_case)
+        return case_model_to_graphql_type(saved)
+
+    @strawberry.mutation(
+        description="Delete a diagnostic case and its temporary image resources."
+    )
+    async def delete_diagnostic_case(
+        self,
+        info: Info,
+        case_id: str,
+    ) -> bool:
+        from app.diagnostic.models import is_valid_uuid
+        if not is_valid_uuid(case_id):
+            raise ValueError(f"INVALID_CASE_ID: '{case_id}' is not a valid UUID.")
+
+        request = info.context["request"]
+        user_id = get_user_id_from_request(request)
+
+        from app.diagnostic.case_service import get_diagnostic_case_service
+        case_svc = get_diagnostic_case_service()
+        effective_user_id = user_id if user_id else "anon_default_session"
+
+        deleted = await case_svc.delete_case(effective_user_id, case_id)
+        if not deleted and not user_id:
+            for uid, user_cases in list(case_svc._cases.items()):
+                if uid.startswith("anon_") and case_id in user_cases:
+                    deleted = await case_svc.delete_case(uid, case_id)
+                    break
+        return deleted

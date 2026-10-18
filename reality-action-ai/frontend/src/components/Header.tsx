@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useAIProviderStatus } from '../hooks/useAIProviderStatus';
 
 interface HeaderProps {
   aiMode?: string;
+  onOpenRecentCases?: () => void;
 }
 
-export function Header({ aiMode = 'mock' }: HeaderProps) {
-  const isReady = aiMode === 'gemma';
+export function Header({ onOpenRecentCases }: HeaderProps) {
+  const aiStatus = useAIProviderStatus();
   const { user, signOut } = useAuth();
 
   return (
@@ -14,32 +16,36 @@ export function Header({ aiMode = 'mock' }: HeaderProps) {
       <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
         {/* Logo */}
         <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-7 h-7 rounded bg-lime-400/10 border border-lime-400/30 flex items-center justify-center group-hover:border-lime-400/60 transition-colors">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M2 7h10M8 3l4 4-4 4" stroke="#b8ff00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+          <div className="w-8 h-8 rounded-lg overflow-hidden border border-lime-400/40 flex items-center justify-center group-hover:border-lime-400/80 transition-colors bg-black flex-shrink-0">
+            <img src="/logo.png" alt="Reality AI Logo" className="w-full h-full object-cover" />
           </div>
           <span className="font-mono text-sm font-semibold tracking-[0.06em] text-white">
-            REALITY
-            <span className="text-lime-400 mx-1.5">→</span>
-            ACTION AI
+            REALITY<span className="text-lime-400">-</span>AI
           </span>
         </Link>
 
         {/* Right Nav */}
         <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-2 bg-graphite-800 border border-white/[0.06] rounded-full px-3 py-1.5">
-            <span
-              className={`status-dot ${
-                isReady
-                  ? 'bg-lime-400 animate-pulse'
-                  : 'bg-yellow-400/80 animate-pulse-slow'
-              }`}
-            />
-            <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-white/50">
-              {isReady ? 'GEMMA 4 CONNECTED' : 'GEMMA 4 READY'}
+          <div
+            className="hidden sm:flex items-center gap-2 bg-graphite-800 border border-white/[0.06] rounded-full px-3 py-1.5 cursor-default transition-all"
+            title={aiStatus.tooltipText}
+          >
+            <span className={`status-dot ${aiStatus.dotClass}`} />
+            <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-white/70">
+              {aiStatus.badgeText}
             </span>
           </div>
+
+          {/* Recent 7-Day Diagnostic Cases */}
+          {onOpenRecentCases && (
+            <button
+              onClick={onOpenRecentCases}
+              className="label-tech text-white/60 hover:text-lime-400 transition-colors flex items-center gap-1.5"
+            >
+              <span>🗂️</span>
+              <span className="hidden sm:inline">Cases</span>
+            </button>
+          )}
 
           {/* History link */}
           <Link

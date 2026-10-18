@@ -49,6 +49,6 @@ Thumbs.db
 *.iml
 
 # ── Large Models ───────────────────────────────────────────────
+/models/
 *.onnx
-models/
-frontend/public/models/
+!frontend/public/models/detectra.onnx

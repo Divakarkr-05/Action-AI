@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# REALITY → ACTION AI — Render Blueprint Deployment Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── 1. Backend Web Service (FastAPI + Strawberry GraphQL) ─────────────────
+  - type: web
+    name: reality-action-backend
+    runtime: python
+    rootDir: reality-action-ai/backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: AI_MODE
+        value: sarvam
+      - key: SARVAM_MODEL
+        value: gemma4
+      - key: SARVAM_BASE_URL
+        value: https://api.sarvam.ai/v2
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "10"
+      # Sensitive secrets configured in Render Dashboard (sync: false prevents hardcoding):
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  # ── 2. Frontend Static Site (React + Vite + Detectra ONNX) ────────────────
+  - type: web
+    name: reality-action-frontend
+    runtime: static
+    rootDir: reality-action-ai/frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeploy: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Public frontend configuration:
+      - key: VITE_GRAPHQL_URL
+        sync: false
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false

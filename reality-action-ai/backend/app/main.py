@@ -65,12 +65,15 @@ def create_app() -> FastAPI:
     # ── REST health check ──────────────────────────────────────
     @app.get("/health", tags=["Health"])
     async def health() -> dict:
-        active_model = settings.sarvam_model if settings.ai_mode.strip().lower() == "sarvam" else settings.hf_model
+        is_sarvam = settings.ai_mode.strip().lower() == "sarvam"
+        active_model = settings.sarvam_model if is_sarvam else settings.hf_model
+        provider_name = settings.ai_mode.strip().lower()
         return {
             "status": "ok",
             "service": "reality-action-ai",
             "version": "0.1.0",
             "ai_mode": settings.ai_mode,
+            "provider": provider_name,
             "model": active_model,
         }
 

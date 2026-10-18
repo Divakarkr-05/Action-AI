@@ -24,6 +24,18 @@ logger = logging.getLogger(__name__)
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+# Domain mapping for knowledge files
+DOCUMENT_DOMAINS: Dict[str, str] = {
+    "belt_drive_tension.md": "MECHANICAL",
+    "capacitor_discharge.md": "ELECTRONICS",
+    "diode_transistor_testing.md": "ELECTRONICS",
+    "electrical_safety.md": "ELECTRONICS",
+    "hvac_troubleshooting.md": "HVAC",
+    "resistor_solder_faults.md": "ELECTRONICS",
+    "rj45_network_termination.md": "NETWORK",
+    "voltage_regulator_power_rail.md": "ELECTRONICS",
+}
+
 
 @dataclass
 class KnowledgeChunk:
@@ -32,6 +44,7 @@ class KnowledgeChunk:
     source: str
     title: str
     content: str
+    domain: str = "GENERAL"
     embedding: Optional[List[float]] = None
 
 
@@ -42,6 +55,31 @@ class RetrievedChunk:
     content: str
     score: float
     source: str
+    domain: str = "GENERAL"
+
+
+STOPWORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
+    "below", "between", "both", "but", "by", "can't", "cannot", "could", "couldn't",
+    "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during",
+    "each", "few", "for", "from", "further", "had", "hadn't", "has", "hasn't", "have",
+    "haven't", "having", "he", "he'd", "he'll", "he's", "her", "here", "here's",
+    "hers", "herself", "him", "himself", "his", "how", "how's", "i", "i'd", "i'll",
+    "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself",
+    "let's", "me", "more", "most", "mustn't", "my", "myself", "no", "nor", "not",
+    "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours",
+    "ourselves", "out", "over", "own", "same", "shan't", "she", "she'd", "she'll",
+    "she's", "should", "shouldn't", "so", "some", "such", "than", "that", "that's",
+    "the", "their", "theirs", "them", "themselves", "then", "there", "there's", "these",
+    "they", "they'd", "they'll", "they're", "they've", "this", "those", "through",
+    "to", "too", "under", "until", "up", "very", "was", "wasn't", "we", "we'd",
+    "we'll", "we're", "we've", "were", "weren't", "what", "what's", "when", "when's",
+    "where", "where's", "which", "while", "who", "who's", "whom", "why", "why's",
+    "with", "won't", "would", "wouldn't", "you", "you'd", "you'll", "you're", "you've",
+    "your", "yours", "yourself", "yourselves", "today", "tomorrow", "yesterday", "day",
+    "need", "tools", "tool", "color", "sky", "blue", "see", "look", "tell",
+}
 
 
 # ── Cosine Similarity & Math Helpers ─────────────────────────────────────────
@@ -62,8 +100,8 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
 
 
 def _compute_lexical_embedding(text: str, vocab: List[str]) -> List[float]:
-    """Fallback term-frequency vectorizer for offline testing and fallback."""
-    words = re.findall(r"\b[a-z0-9_-]+\b", text.lower())
+    """Fallback term-frequency vectorizer excluding stopwords."""
+    words = [w for w in re.findall(r"\b[a-z0-9_-]+\b", text.lower()) if w not in STOPWORDS and len(w) > 2]
     total = len(words) or 1
     counts: Dict[str, int] = {}
     for w in words:
@@ -119,12 +157,14 @@ def chunk_markdown_document(content: str, filename: str) -> List[KnowledgeChunk]
             continue
 
         chunk_id = f"{filename}#part-{idx+1}"
+        domain = DOCUMENT_DOMAINS.get(filename, "GENERAL")
         chunks.append(
             KnowledgeChunk(
                 id=chunk_id,
                 source=filename,
                 title=f"{doc_title} → {sec_title}" if sec_title != doc_title else doc_title,
                 content=clean_body,
+                domain=domain,
             )
         )
 
@@ -191,11 +231,11 @@ class RAGService:
 
         self._chunks = all_chunks
 
-        # Build vocabulary for lexical fallback
+        # Build vocabulary for lexical fallback excluding stopwords
         words = set()
         for c in self._chunks:
             for w in re.findall(r"\b[a-z0-9_-]+\b", f"{c.title} {c.content}".lower()):
-                if len(w) > 2:
+                if len(w) > 2 and w not in STOPWORDS:
                     words.add(w)
         self._vocab = sorted(list(words))
 
@@ -291,19 +331,34 @@ class RAGService:
 
     # ── Retrieval ────────────────────────────────────────────────────────────
 
-    async def retrieve(self, query: str, top_k: int = 3) -> List[RetrievedChunk]:
+    async def retrieve(
+        self,
+        query: str,
+        top_k: int = 3,
+        domain: Optional[str] = None,
+        min_relevance_threshold: float = 0.25,
+    ) -> List[RetrievedChunk]:
         """
         Retrieve the top-k most relevant knowledge chunks for a query.
 
         Args:
             query: The search query or technical question.
             top_k: Number of chunks to return (default 3).
+            domain: Optional domain filter (e.g., 'PLANT', 'ELECTRONICS', 'MECHANICAL').
+            min_relevance_threshold: Hard cutoff score below which chunks are discarded (default 0.25).
 
         Returns:
-            List of RetrievedChunk with title, content, score, and source.
+            List of RetrievedChunk with title, content, score, source, and domain.
         """
         if not query or not query.strip():
             return []
+
+        # If a non-technical domain (like plant/biology) is specified, engineering docs are NOT relevant
+        if domain:
+            norm_dom = domain.strip().upper()
+            if norm_dom in ("PLANT", "BIOLOGY", "HORTICULTURE", "BOTANY", "NATURE", "FOOD"):
+                logger.info("RAG retrieval skipped: domain '%s' does not match technical engineering corpus.", norm_dom)
+                return []
 
         if not self._is_indexed:
             self.build_index()
@@ -319,13 +374,34 @@ class RAGService:
             if not chunk.embedding:
                 continue
 
+            # Domain compatibility check
+            if domain:
+                norm_dom = domain.strip().upper()
+                if norm_dom in ("ELECTRONICS", "ELECTRICAL"):
+                    if chunk.domain != "ELECTRONICS":
+                        continue
+                elif norm_dom == "MECHANICAL":
+                    if chunk.domain != "MECHANICAL":
+                        continue
+                elif norm_dom == "HVAC":
+                    if chunk.domain != "HVAC":
+                        continue
+                elif norm_dom == "NETWORK":
+                    if chunk.domain != "NETWORK":
+                        continue
+
             score = cosine_similarity(query_emb, chunk.embedding)
 
-            # Keyword presence bonus for exact keyword matches in title/content
-            query_terms = [t for t in re.findall(r"\b[a-z0-9_-]+\b", clean_query.lower()) if len(t) > 2]
+            # Keyword presence requirement: at least one non-stopword keyword must match
+            query_terms = [t for t in re.findall(r"\b[a-z0-9_-]+\b", clean_query.lower()) if len(t) > 2 and t not in STOPWORDS]
             if query_terms:
                 matches = sum(1 for t in query_terms if t in chunk.content.lower() or t in chunk.title.lower())
+                if matches == 0:
+                    continue
                 score += (matches / len(query_terms)) * 0.15
+            else:
+                # Query has no substantive topical terms
+                continue
 
             scored_chunks.append(
                 RetrievedChunk(
@@ -333,15 +409,16 @@ class RAGService:
                     content=chunk.content,
                     score=round(max(0.0, min(1.0, score)), 4),
                     source=chunk.source,
+                    domain=chunk.domain,
                 )
             )
 
         # Sort descending by score
         scored_chunks.sort(key=lambda x: x.score, reverse=True)
 
-        # Filter out completely irrelevant scores (< 0.05) if higher matches exist
-        filtered = [c for c in scored_chunks if c.score > 0.05]
-        return filtered[:top_k] if filtered else scored_chunks[:top_k]
+        # Hard validation rule: reject chunks below the minimum relevance threshold
+        filtered = [c for c in scored_chunks if c.score >= min_relevance_threshold]
+        return filtered[:top_k]
 
 
 # ── Global Singleton ─────────────────────────────────────────────────────────

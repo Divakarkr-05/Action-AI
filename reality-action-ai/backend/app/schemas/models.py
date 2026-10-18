@@ -27,6 +27,19 @@ class EmergencyResponse(BaseModel):
     helplines: List[Helpline] = Field(default_factory=list)
 
 
+class VisualFault(BaseModel):
+    """Pinpointed visual fault location and diagnosis with normalized spatial coordinates."""
+
+    id: str = Field(..., description="Unique fault identifier, e.g. fault_1")
+    component_label: str = Field(..., description="Suspected component or region, e.g. 'C12 (Electrolytic Capacitor)'")
+    description: str = Field(..., description="Visual fault symptom, e.g. 'Bulging vent and electrolyte leakage at base'")
+    severity: str = Field(default="WARNING", description="Severity level: CRITICAL | WARNING | INFO")
+    ymin: float = Field(..., ge=0.0, le=1.0, description="Normalized top coordinate (0.0 to 1.0)")
+    xmin: float = Field(..., ge=0.0, le=1.0, description="Normalized left coordinate (0.0 to 1.0)")
+    ymax: float = Field(..., ge=0.0, le=1.0, description="Normalized bottom coordinate (0.0 to 1.0)")
+    xmax: float = Field(..., ge=0.0, le=1.0, description="Normalized right coordinate (0.0 to 1.0)")
+
+
 class AnalysisResult(BaseModel):
     """Structured output produced by the AI analysis service."""
 
@@ -41,6 +54,10 @@ class AnalysisResult(BaseModel):
     grounding_sources: Optional[List[str]] = Field(
         default_factory=list,
         description="Knowledge corpus source files retrieved and used for grounding.",
+    )
+    visual_faults: Optional[List[VisualFault]] = Field(
+        default_factory=list,
+        description="List of detected defective components or fault regions with spatial coordinates.",
     )
     image_authenticity: Optional[str] = Field(
         None, description="Authenticity classification (LIKELY_REAL, LIKELY_AI_GENERATED, UNCERTAIN, UNAVAILABLE)."

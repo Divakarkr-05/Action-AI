@@ -5,7 +5,9 @@ import './index.css';
 import App from './App.tsx';
 import { AuthProvider } from './contexts/AuthContext';
 import { HistoryPage } from './pages/HistoryPage';
+import { KnowledgePage } from './pages/KnowledgePage';
 import { LoginPage } from './pages/LoginPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { SignupPage } from './pages/SignupPage';
 
 createRoot(document.getElementById('root')!).render(
@@ -17,6 +19,8 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/knowledge" element={<KnowledgePage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

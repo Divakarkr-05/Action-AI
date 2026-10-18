@@ -51,10 +51,8 @@ export function LoginPage() {
         {/* Logo / Brand */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 rounded-lg bg-lime-400/10 border border-lime-400/30 flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
-                <path d="M2 7h10M8 3l4 4-4 4" stroke="#b8ff00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+            <div className="w-10 h-10 rounded-lg overflow-hidden border border-lime-400/40 flex items-center justify-center bg-black flex-shrink-0">
+              <img src="/logo.png" alt="Reality AI Logo" className="w-full h-full object-cover" />
             </div>
             <span className="font-mono text-lg font-semibold tracking-[0.06em] text-white">
               REALITY

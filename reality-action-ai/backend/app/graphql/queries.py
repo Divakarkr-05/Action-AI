@@ -13,7 +13,9 @@ from strawberry.types import Info
 from app.config.settings import get_settings
 from app.graphql.schema import (
     AnalysisHistoryItemType,
+    DiagnosticCaseType,
     HealthType,
+    case_model_to_graphql_type,
 )
 from app.middleware.auth import get_user_id_from_request
 from app.services.history_service import get_history_service
@@ -61,11 +63,14 @@ class Query:
     @strawberry.field(description="Service health check.")
     def health(self) -> HealthType:
         settings = get_settings()
+        is_sarvam = settings.ai_mode.strip().lower() == "sarvam"
+        active_model = settings.sarvam_model if is_sarvam else settings.hf_model
         return HealthType(
             status="ok",
             version="0.1.0",
             ai_mode=settings.ai_mode,
-            model=settings.hf_model,
+            provider=settings.ai_mode.strip().lower(),
+            model=active_model,
         )
 
     @strawberry.field(description="Fetch the authenticated user's analysis history.")
@@ -114,3 +119,49 @@ class Query:
         if not record:
             return None
         return _dict_to_history_item(record)
+
+    @strawberry.field(description="Fetch a diagnostic case by database UUID.")
+    async def diagnostic_case(
+        self,
+        info: Info,
+        id: str,
+    ) -> Optional[DiagnosticCaseType]:
+        from app.diagnostic.models import is_valid_uuid
+        if not is_valid_uuid(id):
+            logger.warning("Rejected non-UUID diagnostic_case query id '%s'.", id)
+            return None
+
+        request = info.context["request"]
+        user_id = get_user_id_from_request(request)
+
+        from app.diagnostic.case_service import get_diagnostic_case_service
+        case_svc = get_diagnostic_case_service()
+        effective_user_id = user_id or "anon_default_session"
+
+        case = await case_svc.get_case(effective_user_id, id)
+        if not case and not user_id:
+            for uid, user_cases in case_svc._cases.items():
+                if uid.startswith("anon_") and id in user_cases:
+                    case = user_cases[id]
+                    break
+
+        if not case:
+            return None
+        return case_model_to_graphql_type(case)
+
+    @strawberry.field(description="List recent active diagnostic cases for the current user.")
+    async def diagnostic_cases(
+        self,
+        info: Info,
+        limit: int = 20,
+    ) -> List[DiagnosticCaseType]:
+        request = info.context["request"]
+        user_id = get_user_id_from_request(request)
+
+        from app.diagnostic.case_service import get_diagnostic_case_service
+        case_svc = get_diagnostic_case_service()
+        effective_user_id = user_id or "anon_default_session"
+
+        cases = await case_svc.list_cases(effective_user_id, limit=limit)
+        return [case_model_to_graphql_type(c) for c in cases]
+

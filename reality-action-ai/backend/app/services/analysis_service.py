@@ -54,6 +54,28 @@ _MOCK_RESPONSES: List[dict] = [
             "ELECTRICAL HAZARD — Capacitors can retain dangerous charge even after power is disconnected. "
             "Always discharge before touching."
         ),
+        "visual_faults": [
+            {
+                "id": "fault_1",
+                "component_label": "C12 (Electrolytic Capacitor)",
+                "description": "Bulging vent and electrolyte leakage residue at component base",
+                "severity": "CRITICAL",
+                "ymin": 0.18,
+                "xmin": 0.65,
+                "ymax": 0.42,
+                "xmax": 0.88,
+            },
+            {
+                "id": "fault_2",
+                "component_label": "R8 (SMD Resistor)",
+                "description": "Mild thermal discolouration on solder fillet",
+                "severity": "INFO",
+                "ymin": 0.52,
+                "xmin": 0.58,
+                "ymax": 0.64,
+                "xmax": 0.72,
+            },
+        ],
     },
     {
         "what_i_see": (
@@ -79,6 +101,18 @@ _MOCK_RESPONSES: List[dict] = [
             "MECHANICAL HAZARD — Ensure the machine is fully powered off and locked out before servicing. "
             "Never service a running belt drive."
         ),
+        "visual_faults": [
+            {
+                "id": "fault_1",
+                "component_label": "Primary Drive Belt",
+                "description": "Visible cracking and edge fraying along tension segment",
+                "severity": "WARNING",
+                "ymin": 0.32,
+                "xmin": 0.22,
+                "ymax": 0.68,
+                "xmax": 0.78,
+            }
+        ],
     },
     {
         "what_i_see": (
@@ -101,6 +135,18 @@ _MOCK_RESPONSES: List[dict] = [
         ],
         "confidence": 0.79,
         "safety_warning": None,
+        "visual_faults": [
+            {
+                "id": "fault_1",
+                "component_label": "Port 5 & Port 6 Modular Jacks",
+                "description": "Dislodged RJ-45 boot and broken retention clip",
+                "severity": "WARNING",
+                "ymin": 0.38,
+                "xmin": 0.35,
+                "ymax": 0.58,
+                "xmax": 0.62,
+            }
+        ],
     },
     {
         "what_i_see": (
@@ -125,6 +171,18 @@ _MOCK_RESPONSES: List[dict] = [
             "REFRIGERANT WARNING — Do not attempt to access refrigerant lines or the compressor unit. "
             "This requires a licensed technician."
         ),
+        "visual_faults": [
+            {
+                "id": "fault_1",
+                "component_label": "Status Display & Alarm LED",
+                "description": "Lockout code E03 active with flashing warning indicator",
+                "severity": "WARNING",
+                "ymin": 0.25,
+                "xmin": 0.40,
+                "ymax": 0.50,
+                "xmax": 0.65,
+            }
+        ],
     },
 ]
 
@@ -184,31 +242,89 @@ class MockAnalysisService:
         res_obj = AnalysisResult(**mock)
         if session_id:
             from app.services.session_manager import get_session_manager
-            get_session_manager().set_session(session_id, {"analysis": res_obj, "image_b64": image_b64})
+            from app.services.domain_detector import detect_domain
+
+            domain = detect_domain(res_obj.what_i_see, question or "")
+            get_session_manager().set_session(
+                session_id,
+                {
+                    "mode": "GENERAL_ANALYSIS",
+                    "domain": domain,
+                    "analysis": res_obj,
+                    "image_b64": image_b64,
+                    "question": question,
+                    "history": [
+                        {"role": "user", "content": question or ""},
+                        {"role": "assistant", "content": f"{res_obj.what_i_see}\n{res_obj.next_action}"},
+                    ],
+                },
+            )
         return res_obj
 
     async def ask_follow_up(
         self,
-        session_id: str,   # noqa: ARG002
+        session_id: str,
         question: str,
     ) -> FollowUpResult:
-        await asyncio.sleep(random.uniform(0.6, 1.4))
-        answer = random.choice(_FOLLOW_UP_RESPONSES)
+        await asyncio.sleep(random.uniform(0.1, 0.4))
+
+        from app.services.session_manager import get_session_manager
+        from app.services.domain_detector import detect_domain
+
+        ctx = get_session_manager().get_session(session_id)
+        prior = ctx.get("analysis") if ctx else None
+        what_i_see = prior.what_i_see if prior else ""
+        initial_q = ctx.get("question", "") if ctx else ""
+        domain = (ctx.get("domain") if ctx else None) or detect_domain(what_i_see, initial_q, question)
 
         grounding_sources = []
         try:
             from app.services.rag_service import get_rag_service
 
             rag = get_rag_service()
-            chunks = await rag.retrieve(question.strip(), top_k=2)
-            grounding_sources = list(dict.fromkeys(c.source for c in chunks))
+            chunks = await rag.retrieve(
+                question.strip(),
+                top_k=2,
+                domain=domain,
+                min_relevance_threshold=0.25,
+            )
+            if chunks:
+                grounding_sources = list(dict.fromkeys(c.source for c in chunks))
+            else:
+                grounding_sources = ["VISUAL ANALYSIS"]
         except Exception:
-            pass
+            grounding_sources = ["VISUAL ANALYSIS"]
+
+        if domain == "PLANT":
+            q_lower = question.lower()
+            if any(term in q_lower for term in ("capacitor", "circuit", "multimeter", "voltage", "solder")):
+                answer = (
+                    f"The current visual inspection is of a plant ({what_i_see or 'houseplant'}). "
+                    "There are no capacitors or electrical components present in this subject. "
+                    "If you are troubleshooting an electronic device, please upload a photo of that component."
+                )
+            elif "tool" in q_lower:
+                answer = (
+                    "For plant care and maintenance, you typically need clean pruning shears, "
+                    "a well-draining pot with fresh potting soil, a watering can, and optionally a moisture meter."
+                )
+            else:
+                answer = f"Based on the inspected plant ({what_i_see or 'plant'}), ensure proper indirect sunlight, regular watering when the top inch of soil is dry, and adequate pot drainage."
+        elif domain == "MECHANICAL":
+            answer = "For belt and pulley inspection, check alignment with a straightedge and verify deflection tension according to manufacturer specifications."
+        else:
+            answer = random.choice(_FOLLOW_UP_RESPONSES)
+
+        if ctx:
+            if "history" not in ctx:
+                ctx["history"] = []
+            ctx["history"].append({"role": "user", "content": question.strip()})
+            ctx["history"].append({"role": "assistant", "content": answer})
 
         return FollowUpResult(
             answer=answer,
             steps=None,
-            confidence=round(random.uniform(0.70, 0.92), 2),
+            confidence=round(random.uniform(0.75, 0.92), 2),
             safety_warning=None,
             grounding_sources=grounding_sources,
         )

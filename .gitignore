@@ -10,6 +10,5 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
-*.onnx
-models/
-**/public/models/
+/models/
+

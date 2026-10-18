@@ -12,7 +12,9 @@ import type {
   AnalysisResult,
   FollowUpResult,
   ImageAuthenticityResult,
+  DiagnosticCase,
 } from '../types';
+import { getAccessToken } from './auth';
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -30,9 +32,19 @@ async function gqlFetch<T>(
   query: string,
   variables?: Record<string, unknown>,
 ): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const token = await getAccessToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // Non-blocking for unauthenticated requests
+  }
+
   const response = await fetch(GQL_ENDPOINT, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ query, variables }),
   });
 
@@ -52,6 +64,7 @@ async function gqlFetch<T>(
 
   return json.data;
 }
+
 
 // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -83,6 +96,16 @@ const ANALYZE_REALITY_MUTATION = /* GraphQL */ `
       confidence
       safetyWarning
       groundingSources
+      visualFaults {
+        id
+        componentLabel
+        description
+        severity
+        ymin
+        xmin
+        ymax
+        xmax
+      }
       imageAuthenticity
       aiGeneratedProbability
       authenticityConfidence
@@ -126,6 +149,7 @@ const HEALTH_QUERY = /* GraphQL */ `
       status
       version
       aiMode
+      provider
       model
     }
   }
@@ -167,10 +191,18 @@ export async function askFollowUp(
   return data.askFollowUp;
 }
 
-export async function fetchHealth() {
-  return gqlFetch<{
-    health: { status: string; version: string; aiMode: string; model: string };
-  }>(HEALTH_QUERY);
+export interface HealthResponse {
+  health: {
+    status: string;
+    version: string;
+    aiMode: string;
+    provider: string;
+    model: string;
+  };
+}
+
+export async function fetchHealth(): Promise<HealthResponse> {
+  return gqlFetch<HealthResponse>(HEALTH_QUERY);
 }
 
 const CLEAR_SESSION_MUTATION = /* GraphQL */ `
@@ -194,5 +226,290 @@ export async function clearSession(sessionId: string): Promise<boolean> {
     console.warn('Failed to clear session on backend:', err);
     return false;
   }
+}
+
+// ── Diagnostic Intelligence Engine Operations ─────────────────────────────
+
+const DIAGNOSTIC_CASE_FIELDS = /* GraphQL */ `
+  fragment DiagnosticCaseFields on DiagnosticCaseType {
+    id
+    userId
+    sessionId
+    title
+    domain
+    status
+    currentState
+    investigationProgress
+    initialImageUrl
+    latestImageUrl
+    afterImageUrl
+    imageQuality {
+      focus
+      resolution
+      glare
+      lighting
+      occlusion
+      overall
+      guidance
+    }
+    cameraCoach {
+      target
+      reason
+      whereToPoint
+      howClose
+      whatAngle
+      lightingRequirement
+      whatMustBeVisible
+    }
+    evidence {
+      id
+      claim
+      evidenceType
+      provenance
+      confidence
+      sourceReference
+    }
+    identifiedComponents {
+      id
+      referenceDesignator
+      componentType
+      package
+      marking
+      orientation
+      identityConfidence
+      locationConfidence
+      defectConfidence
+    }
+    faultBoxes {
+      id
+      label
+      component
+      defect
+      ymin
+      xmin
+      ymax
+      xmax
+      confidence
+      severity
+      locationType
+      observedEvidence
+      inferredInterpretation
+      unknowns
+      recommendedInspection
+    }
+    hypotheses {
+      id
+      title
+      confidence
+      status
+      riskLevel
+      observedEvidence
+      supportingEvidence
+      disconfirmingEvidence
+      recommendedTest
+      affectedComponents
+    }
+    activeTest {
+      id
+      title
+      objective
+      hypothesisIds
+      requiredTools
+      prerequisites
+      safetyWarnings
+      procedure
+      expectedOutcomes {
+        condition
+        interpretation
+      }
+      discriminatingPower
+      whyThisTest
+    }
+    repairPlan {
+      faultId
+      componentToReplace
+      replacementSpecs
+      requiredTools
+      prerequisites
+      safetyWarnings
+      procedureSteps
+      counterfactualPrediction {
+        expectedVisualChange
+        expectedElectricalChange
+        unacceptableOutcomes
+      }
+      verificationMethod
+    }
+    verificationResult {
+      status
+      visualMatchScore
+      detectedChanges
+      missingExpectedChanges
+      summary
+      electricalVerificationRequired
+    }
+    confidenceTimeline {
+      timestamp
+      stage
+      hypothesisId
+      confidence
+      triggerEvent
+    }
+    events {
+      id
+      timestamp
+      eventType
+      description
+    }
+    createdAt
+    updatedAt
+    expiresAt
+    resolvedAt
+  }
+`;
+
+const CREATE_DIAGNOSTIC_CASE_MUTATION = /* GraphQL */ `
+  ${DIAGNOSTIC_CASE_FIELDS}
+  mutation CreateDiagnosticCase(
+    $image: String!
+    $question: String
+    $sessionId: String
+  ) {
+    createDiagnosticCase(
+      image: $image
+      question: $question
+      sessionId: $sessionId
+    ) {
+      ...DiagnosticCaseFields
+    }
+  }
+`;
+
+const SUBMIT_DIAGNOSTIC_TEST_MUTATION = /* GraphQL */ `
+  ${DIAGNOSTIC_CASE_FIELDS}
+  mutation SubmitDiagnosticTest(
+    $caseId: String!
+    $testId: String!
+    $resultType: String!
+    $numericValue: Float
+    $unit: String
+    $textValue: String
+    $outcomeSelection: String
+    $notes: String
+  ) {
+    submitDiagnosticTest(
+      caseId: $caseId
+      testId: $testId
+      resultType: $resultType
+      numericValue: $numericValue
+      unit: $unit
+      textValue: $textValue
+      outcomeSelection: $outcomeSelection
+      notes: $notes
+    ) {
+      ...DiagnosticCaseFields
+    }
+  }
+`;
+
+const VERIFY_REPAIR_MUTATION = /* GraphQL */ `
+  ${DIAGNOSTIC_CASE_FIELDS}
+  mutation VerifyRepair($caseId: String!, $afterImage: String!) {
+    verifyRepair(caseId: $caseId, afterImage: $afterImage) {
+      ...DiagnosticCaseFields
+    }
+  }
+`;
+
+const DELETE_DIAGNOSTIC_CASE_MUTATION = /* GraphQL */ `
+  mutation DeleteDiagnosticCase($caseId: String!) {
+    deleteDiagnosticCase(caseId: $caseId)
+  }
+`;
+
+const GET_DIAGNOSTIC_CASE_QUERY = /* GraphQL */ `
+  ${DIAGNOSTIC_CASE_FIELDS}
+  query GetDiagnosticCase($id: String!) {
+    diagnosticCase(id: $id) {
+      ...DiagnosticCaseFields
+    }
+  }
+`;
+
+const LIST_DIAGNOSTIC_CASES_QUERY = /* GraphQL */ `
+  ${DIAGNOSTIC_CASE_FIELDS}
+  query ListDiagnosticCases($limit: Int) {
+    diagnosticCases(limit: $limit) {
+      ...DiagnosticCaseFields
+    }
+  }
+`;
+
+export async function createDiagnosticCase(
+  image: string,
+  question?: string,
+  sessionId?: string,
+): Promise<DiagnosticCase> {
+  const data = await gqlFetch<{ createDiagnosticCase: DiagnosticCase }>(
+    CREATE_DIAGNOSTIC_CASE_MUTATION,
+    { image, question: question ?? null, sessionId: sessionId ?? null },
+  );
+  return data.createDiagnosticCase;
+}
+
+export async function submitDiagnosticTest(params: {
+  caseId: string;
+  testId: string;
+  resultType: string;
+  numericValue?: number | null;
+  unit?: string | null;
+  textValue?: string | null;
+  outcomeSelection?: string | null;
+  notes?: string | null;
+}): Promise<DiagnosticCase> {
+  const data = await gqlFetch<{ submitDiagnosticTest: DiagnosticCase }>(
+    SUBMIT_DIAGNOSTIC_TEST_MUTATION,
+    params,
+  );
+  return data.submitDiagnosticTest;
+}
+
+export async function verifyRepair(
+  caseId: string,
+  afterImage: string,
+): Promise<DiagnosticCase> {
+  const data = await gqlFetch<{ verifyRepair: DiagnosticCase }>(
+    VERIFY_REPAIR_MUTATION,
+    { caseId, afterImage },
+  );
+  return data.verifyRepair;
+}
+
+export async function getDiagnosticCase(
+  id: string,
+): Promise<DiagnosticCase | null> {
+  const data = await gqlFetch<{ diagnosticCase: DiagnosticCase | null }>(
+    GET_DIAGNOSTIC_CASE_QUERY,
+    { id },
+  );
+  return data.diagnosticCase;
+}
+
+export async function listDiagnosticCases(
+  limit: number = 20,
+): Promise<DiagnosticCase[]> {
+  const data = await gqlFetch<{ diagnosticCases: DiagnosticCase[] }>(
+    LIST_DIAGNOSTIC_CASES_QUERY,
+    { limit },
+  );
+  return data.diagnosticCases || [];
+}
+
+export async function deleteDiagnosticCase(caseId: string): Promise<boolean> {
+  const data = await gqlFetch<{ deleteDiagnosticCase: boolean }>(
+    DELETE_DIAGNOSTIC_CASE_MUTATION,
+    { caseId },
+  );
+  return data.deleteDiagnosticCase;
 }
 

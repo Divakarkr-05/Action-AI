@@ -13,9 +13,11 @@ interface ImageUploaderProps {
   onImageSelect: (img: ImageFile) => void;
   onImageRemove: () => void;
   onAnalyze: () => void;
+  onDiagnoseCase?: () => void;
   question: string;
   onQuestionChange: (q: string) => void;
   isAnalyzing: boolean;
+  isDiagnosing?: boolean;
 }
 
 export function ImageUploader({
@@ -23,9 +25,11 @@ export function ImageUploader({
   onImageSelect,
   onImageRemove,
   onAnalyze,
+  onDiagnoseCase,
   question,
   onQuestionChange,
   isAnalyzing,
+  isDiagnosing = false,
 }: ImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -224,31 +228,59 @@ export function ImageUploader({
         />
       </div>
 
-      {/* Analyze CTA */}
+      {/* Actions */}
       {image && (
-        <button
-          id="analyze-button"
-          onClick={onAnalyze}
-          disabled={isAnalyzing}
-          className="btn-primary w-full animate-fade-in"
-        >
-          {isAnalyzing ? (
-            <>
-              <span className="w-3 h-3 border border-graphite-950/40 border-t-graphite-950
-                               rounded-full animate-spin" />
-              ANALYZING...
-            </>
-          ) : (
-            <>
-              ANALYZE REALITY
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M2 7h10M8 3l4 4-4 4"
-                  stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </>
+        <div className="flex flex-col gap-2.5 animate-fade-in">
+          {onDiagnoseCase && (
+            <button
+              id="diagnose-case-button"
+              onClick={onDiagnoseCase}
+              disabled={isAnalyzing || isDiagnosing}
+              className="btn-primary w-full py-3.5 bg-lime-400 hover:bg-lime-300 text-black font-mono font-bold tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-lime-400/10 cursor-pointer"
+            >
+              {isDiagnosing ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-black/40 border-t-black rounded-full animate-spin" />
+                  INITIALIZING CLOSED-LOOP DIAGNOSTIC COPILOT...
+                </>
+              ) : (
+                <>
+                  <span>⚡</span>
+                  DIAGNOSE ELECTRONICS (CLOSED-LOOP COPILOT)
+                </>
+              )}
+            </button>
           )}
-        </button>
+
+          <button
+            id="analyze-button"
+            onClick={onAnalyze}
+            disabled={isAnalyzing || isDiagnosing}
+            className="btn-ghost w-full py-2.5 text-xs text-white/70 hover:text-white border border-white/10 flex items-center justify-center gap-2"
+          >
+            {isAnalyzing ? (
+              <>
+                <span className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />
+                ANALYZING REALITY...
+              </>
+            ) : (
+              <>
+                QUICK REALITY SCAN
+                <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                  <path
+                    d="M2 7h10M8 3l4 4-4 4"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </>
+            )}
+          </button>
+        </div>
       )}
     </div>
   );
 }
+

@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.config.settings import get_settings
-from app.schemas.models import AnalysisResult, FollowUpResult
+from app.schemas.models import AnalysisResult, FollowUpResult, VisualFault
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ CRITICAL RULES:
 7. Prominently include safety warnings for electrical systems, high voltage, capacitors, pressurized fluids, moving mechanical parts, chemical hazards, fire hazards, or structural damage.
 8. Recommend professional licensed assistance when situations are hazardous or exceed DIY safety limits.
 9. Prefer simple, clear, actionable technical language.
+10. VISUAL FAULT PINPOINTING: Locate and mark suspected defective components, damaged areas, burnt traces, bulging capacitors, loose connectors, or points of interest. Provide normalized bounding coordinates (ymin, xmin, ymax, xmax between 0.0 and 1.0 where top-left is 0.0, 0.0 and bottom-right is 1.0, 1.0). If no distinct fault can be spatially located, provide an empty array [].
 
 OUTPUT FORMAT:
 You MUST respond with valid, parseable JSON conforming strictly to this schema:
@@ -53,7 +54,19 @@ You MUST respond with valid, parseable JSON conforming strictly to this schema:
     "Step 3: ..."
   ],
   "confidence": 0.85,
-  "safety_warning": "Warning text if hazard exists, or null if completely safe."
+  "safety_warning": "Warning text if hazard exists, or null if completely safe.",
+  "visual_faults": [
+    {
+      "id": "fault_1",
+      "component_label": "Identified Component or Region (e.g. Primary Drive Belt / Leaf Tip / Capacitor C12)",
+      "description": "Specific visual defect or condition observed",
+      "severity": "CRITICAL / WARNING / INFO",
+      "ymin": 0.22,
+      "xmin": 0.35,
+      "ymax": 0.45,
+      "xmax": 0.65
+    }
+  ]
 }
 Do NOT include any text outside the JSON object."""
 
@@ -127,6 +140,80 @@ def _format_rag_context(retrieved_chunks: List[Any]) -> str:
     )
 
 
+def _parse_visual_faults(raw_faults: Any) -> List[VisualFault]:
+    """Defensively parse, normalize, and clamp visual faults with spatial coordinates."""
+    if not isinstance(raw_faults, list):
+        return []
+
+    parsed: List[VisualFault] = []
+    for idx, item in enumerate(raw_faults):
+        if not isinstance(item, dict):
+            continue
+        try:
+            fault_id = str(item.get("id") or f"fault_{idx + 1}").strip()
+            label = str(item.get("component_label") or item.get("label") or f"Component {idx + 1}").strip()
+            desc = str(item.get("description") or "Suspected fault location").strip()
+            sev = str(item.get("severity") or "WARNING").strip().upper()
+            if sev not in ("CRITICAL", "WARNING", "INFO"):
+                sev = "WARNING"
+
+            # Parse coordinates
+            ymin = float(item.get("ymin", 0.0))
+            xmin = float(item.get("xmin", 0.0))
+            ymax = float(item.get("ymax", 1.0))
+            xmax = float(item.get("xmax", 1.0))
+
+            # Auto-scale if model used 0-1000 or 0-100 coordinate systems
+            if any(c > 1.0 for c in (ymin, xmin, ymax, xmax)):
+                max_coord = max(ymin, xmin, ymax, xmax)
+                if max_coord <= 100.0:
+                    ymin /= 100.0
+                    xmin /= 100.0
+                    ymax /= 100.0
+                    xmax /= 100.0
+                elif max_coord <= 1000.0:
+                    ymin /= 1000.0
+                    xmin /= 1000.0
+                    ymax /= 1000.0
+                    xmax /= 1000.0
+
+            # Clamp between 0.0 and 1.0
+            ymin = max(0.0, min(1.0, ymin))
+            xmin = max(0.0, min(1.0, xmin))
+            ymax = max(0.0, min(1.0, ymax))
+            xmax = max(0.0, min(1.0, xmax))
+
+            # Ensure proper min/max ordering
+            if ymin > ymax:
+                ymin, ymax = ymax, ymin
+            if xmin > xmax:
+                xmin, xmax = xmax, xmin
+
+            # Ensure box has minimum visible dimension
+            if (ymax - ymin) < 0.01:
+                ymax = min(1.0, ymin + 0.05)
+            if (xmax - xmin) < 0.01:
+                xmax = min(1.0, xmin + 0.05)
+
+            parsed.append(
+                VisualFault(
+                    id=fault_id,
+                    component_label=label,
+                    description=desc,
+                    severity=sev,
+                    ymin=round(ymin, 4),
+                    xmin=round(xmin, 4),
+                    ymax=round(ymax, 4),
+                    xmax=round(xmax, 4),
+                )
+            )
+        except Exception as parse_err:
+            logger.debug("Skipping unparseable visual fault item: %s", parse_err)
+            continue
+
+    return parsed
+
+
 # ── SarvamService ────────────────────────────────────────────────────────────
 
 class SarvamService:
@@ -180,23 +267,28 @@ class SarvamService:
             else "Inspect what is shown in this image. Diagnose the condition and provide action steps."
         )
 
-        # RAG Retrieval
-        retrieval_query = (
-            question.strip()
-            if question and question.strip()
-            else "electrical safety mechanical belt capacitor hvac network troubleshooting"
-        )
+        # Domain-aware RAG Retrieval: Only retrieve documents relevant to detected domain
+        from app.services.domain_detector import detect_domain
+        detected_domain = detect_domain("", question or "")
         retrieved_chunks = []
-        try:
-            from app.services.rag_service import get_rag_service
+        if detected_domain in ("ELECTRONICS", "MECHANICAL", "HVAC", "NETWORK") and question and question.strip():
+            try:
+                from app.services.rag_service import get_rag_service
 
-            rag = get_rag_service()
-            retrieved_chunks = await rag.retrieve(retrieval_query, top_k=3)
-        except Exception as rag_err:
-            logger.warning("RAG retrieval failed during Sarvam analyze: %s", rag_err)
+                rag = get_rag_service()
+                retrieved_chunks = await rag.retrieve(
+                    question.strip(),
+                    top_k=2,
+                    domain=detected_domain,
+                    min_relevance_threshold=0.25,
+                )
+            except Exception as rag_err:
+                logger.warning("RAG retrieval failed during Sarvam analyze: %s", rag_err)
 
         rag_prompt_section = _format_rag_context(retrieved_chunks)
         grounding_sources = list(dict.fromkeys(c.source for c in retrieved_chunks))
+        if not grounding_sources:
+            grounding_sources = ["VISUAL ANALYSIS"]
 
         prompt_parts = []
         if safety_context:
@@ -264,13 +356,21 @@ class SarvamService:
         result = self._parse_analysis_response(raw_text)
         result.grounding_sources = grounding_sources
 
+        # Determine domain and mode
+        from app.services.domain_detector import detect_domain
+
+        detected_domain = detect_domain(result.what_i_see, user_prompt_text)
+
         session_context = {
+            "mode": "GENERAL_ANALYSIS",
+            "domain": detected_domain,
             "image_b64": image_b64,
+            "image_context": result.what_i_see,
             "question": user_prompt_text,
             "analysis": result,
             "history": [
                 {"role": "user", "content": user_prompt_text},
-                {"role": "assistant", "content": raw_text},
+                {"role": "assistant", "content": f"{result.what_i_see}\n{result.next_action}"},
             ],
         }
         if session_id:
@@ -289,7 +389,8 @@ class SarvamService:
         question: str,
     ) -> FollowUpResult:
         """
-        Answer a follow-up question grounded in the previous inspection session.
+        Answer a follow-up question strictly grounded in the inspected image and current question.
+        Ensures plant and general analysis conversations are not contaminated by electronics RAG/hypotheses.
         """
         if not self._api_key:
             raise ValueError(
@@ -301,55 +402,119 @@ class SarvamService:
             raise ValueError("Question must not be empty.")
 
         from app.services.session_manager import get_session_manager
+        from app.services.domain_detector import detect_domain
+
         ctx = get_session_manager().get_session(session_id)
         if ctx is None and session_id in self._sessions:
             ctx = self._sessions.get(session_id)
 
+        prior: Optional[AnalysisResult] = ctx.get("analysis") if ctx else None
+        image_b64: Optional[str] = ctx.get("image_b64") if ctx else None
+        mode = ctx.get("mode", "GENERAL_ANALYSIS") if ctx else "GENERAL_ANALYSIS"
+
+        what_i_see = prior.what_i_see if prior else ""
+        initial_q = ctx.get("question", "") if ctx else ""
+        domain = ctx.get("domain") or detect_domain(what_i_see, initial_q, question)
+
         context_summary = ""
-        if ctx and "analysis" in ctx:
-            prior: AnalysisResult = ctx["analysis"]
+        if prior:
             context_summary = (
-                f"PRIOR INSPECTION FINDINGS:\n"
-                f"- What was seen: {prior.what_i_see}\n"
-                f"- Problem/State: {prior.what_is_happening}\n"
-                f"- Recommended Next Action: {prior.next_action}\n"
-                f"- Provided Steps: {', '.join(prior.steps)}\n"
-                f"- Safety Warning: {prior.safety_warning or 'None'}\n"
+                f"CURRENT INSPECTED OBJECT UNDERSTANDING:\n"
+                f"- What was identified in image: {prior.what_i_see}\n"
+                f"- Current condition / status: {prior.what_is_happening}\n"
+                f"- Recommended next action: {prior.next_action}\n"
+                f"- Initial steps: {', '.join(prior.steps)}\n"
+                f"- Safety advice: {prior.safety_warning or 'None'}\n"
             )
 
-        # RAG Retrieval for follow-up question
+        # Domain-aware RAG retrieval with strict relevance threshold
         retrieved_chunks = []
         try:
             from app.services.rag_service import get_rag_service
 
             rag = get_rag_service()
-            retrieved_chunks = await rag.retrieve(question.strip(), top_k=3)
+            retrieved_chunks = await rag.retrieve(
+                question.strip(),
+                top_k=3,
+                domain=domain,
+                min_relevance_threshold=0.25,
+            )
         except Exception as rag_err:
             logger.warning("RAG retrieval failed during Sarvam follow-up: %s", rag_err)
 
         rag_prompt_section = _format_rag_context(retrieved_chunks)
-        grounding_sources = list(dict.fromkeys(c.source for c in retrieved_chunks))
+        if retrieved_chunks:
+            grounding_sources = list(dict.fromkeys(c.source for c in retrieved_chunks))
+        else:
+            grounding_sources = ["VISUAL ANALYSIS"]
+
+        # Follow-up prompt adhering to Section 7 of instructions
+        system_prompt = (
+            f"You are REALITY → ACTION AI, answering a follow-up question about an ongoing visual inspection.\n"
+            f"CURRENT MODE: {mode}\n"
+            f"CURRENT DOMAIN: {domain}\n\n"
+            f"CRITICAL GROUNDING & SAFETY RULES:\n"
+            f"1. Answer strictly based on the inspected reality, the current image, and prior observations.\n"
+            f"2. Keep the answer strictly grounded in the detected domain ({domain}).\n"
+            f"3. Do NOT assume electronics, pulleys, capacitor discharge, or motor drives unless the inspected object is genuinely an electronic or mechanical component.\n"
+            f"4. DOMAIN SWITCH / UNRELATED OBJECT PROTECTION: If the user asks about an object or component not present in the inspected image (e.g., asking about a capacitor when the image is a plant), explicitly clarify that the current inspection is of a {domain} ({what_i_see or 'current subject'}) and does not contain that component, rather than hallucinating testing procedures for a non-existent component.\n"
+            f"5. If no technical knowledge references are provided or relevant, rely on visual inspection and general domain knowledge.\n"
+            f"6. Do not hallucinate or contradict previous observations.\n\n"
+            f"OUTPUT FORMAT:\n"
+            f"You MUST respond with valid JSON:\n"
+            f"{{\n"
+            f'  "answer": "Clear, direct, and actionable answer grounded in the current image and question.",\n'
+            f'  "steps": ["Optional step 1", "Optional step 2"] or null,\n'
+            f'  "confidence": 0.85,\n'
+            f'  "safety_warning": "Safety advice if applicable, or null."\n'
+            f"}}\n"
+            f"Do NOT include any text outside the JSON object."
+        )
 
         user_content_parts = []
-        if rag_prompt_section:
-            user_content_parts.append(rag_prompt_section)
         if context_summary:
             user_content_parts.append(context_summary)
+        if rag_prompt_section:
+            user_content_parts.append(rag_prompt_section)
+        else:
+            user_content_parts.append(
+                f"RELEVANT TECHNICAL REFERENCES:\nNone ({'Visual Analysis' if domain == 'PLANT' else 'No high-confidence match'}). Rely on visual reality and {domain.lower()} domain principles."
+            )
+
+        history = ctx.get("history", []) if ctx else []
+        if len(history) > 2:
+            hist_lines = []
+            for item in history[-4:]:
+                role = "User" if item.get("role") == "user" else "Assistant"
+                hist_lines.append(f"{role}: {item.get('content')}")
+            user_content_parts.append("PREVIOUS CONVERSATION CONTEXT:\n" + "\n".join(hist_lines))
+
         user_content_parts.append(f"FOLLOW-UP QUESTION:\n{question.strip()}")
-        user_content = "\n\n".join(user_content_parts)
+        user_text = "\n\n".join(user_content_parts)
+
+        # Build payload with multimodal support when image_b64 is present
+        if image_b64 and self._model.lower() not in ("sarvam-105b", "sarvam-105b-conversations"):
+            data_url = _ensure_data_url(image_b64)
+            user_msg_content: Any = [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": user_text},
+            ]
+        else:
+            user_msg_content = user_text
 
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": SARVAM_FOLLOW_UP_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg_content},
             ],
             "temperature": 0.2,
         }
 
         logger.info(
-            "Calling Sarvam AI follow-up for session %s (RAG sources: %s)...",
+            "Calling Sarvam AI follow-up for session %s (domain: %s, RAG sources: %s)...",
             session_id,
+            domain,
             grounding_sources,
         )
 
@@ -374,6 +539,17 @@ class SarvamService:
 
         result = self._parse_follow_up_response(raw_text)
         result.grounding_sources = grounding_sources
+
+        # Preserve conversation context in session
+        if ctx:
+            if "history" not in ctx:
+                ctx["history"] = []
+            ctx["history"].append({"role": "user", "content": question.strip()})
+            ctx["history"].append({"role": "assistant", "content": result.answer})
+            if session_id:
+                get_session_manager().set_session(session_id, ctx)
+                self._sessions[session_id] = ctx
+
         return result
 
     # ── Parsers ──────────────────────────────────────────────────────────────
@@ -423,6 +599,9 @@ class SarvamService:
         if raw_warning and str(raw_warning).strip().lower() not in ("null", "none", ""):
             safety_warning = str(raw_warning).strip()
 
+        # Parse visual faults
+        visual_faults = _parse_visual_faults(data.get("visual_faults"))
+
         return AnalysisResult(
             what_i_see=what_i_see,
             what_is_happening=what_is_happening,
@@ -430,6 +609,7 @@ class SarvamService:
             steps=steps,
             confidence=confidence,
             safety_warning=safety_warning,
+            visual_faults=visual_faults,
         )
 
     def _fallback_extract_analysis(self, text: str) -> Dict[str, Any]:

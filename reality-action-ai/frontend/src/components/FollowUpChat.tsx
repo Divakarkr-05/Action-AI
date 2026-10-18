@@ -85,7 +85,7 @@ export function FollowUpChat({ sessionId }: FollowUpChatProps) {
       <div className="flex items-center gap-3 mb-6">
         <div className="flex-1 h-px bg-white/[0.06]" />
         <h2 className="font-mono text-xs text-white/40 uppercase tracking-[0.2em] whitespace-nowrap">
-          ASK REALITY → ACTION
+          ASK REALITY-AI
         </h2>
         <div className="flex-1 h-px bg-white/[0.06]" />
       </div>
@@ -167,7 +167,11 @@ export function FollowUpChat({ sessionId }: FollowUpChatProps) {
                         {msg.result.groundingSources.map((src, i) => (
                           <span
                             key={i}
-                            className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/40 border border-white/10 text-white/60"
+                            className={`font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                              src === 'VISUAL ANALYSIS'
+                                ? 'bg-lime-400/10 border-lime-400/30 text-lime-400/90'
+                                : 'bg-black/40 border-white/10 text-white/60'
+                            }`}
                           >
                             {src}
                           </span>
