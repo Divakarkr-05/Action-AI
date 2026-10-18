@@ -13,6 +13,24 @@ from datetime import datetime
 
 
 @strawberry.type
+class HelplineType:
+    name: str
+    number: str
+
+
+@strawberry.type
+class EmergencyResponseType:
+    safety_category: str
+    severity: str
+    emergency_required: bool
+    title: str
+    message: str
+    immediate_actions: List[str]
+    avoid_actions: List[str]
+    helplines: List[HelplineType]
+
+
+@strawberry.type
 class AnalysisResultType:
     """Full AI analysis of an uploaded image."""
 
@@ -28,6 +46,8 @@ class AnalysisResultType:
     authenticity_confidence: Optional[float] = None
     authenticity_model: Optional[str] = None
     authenticity_indicators: Optional[List[str]] = None
+    safety_category: Optional[str] = None
+    emergency_response: Optional[EmergencyResponseType] = None
 
 
 @strawberry.type
@@ -70,6 +90,7 @@ class AnalysisHistoryItemType:
     authenticity_confidence: Optional[float] = None
     authenticity_model: Optional[str] = None
     authenticity_indicators: Optional[List[str]] = None
+    safety_category: Optional[str] = None
 
 
 @strawberry.type
@@ -87,4 +108,14 @@ class DeleteAnalysisResultType:
 
     success: bool
     message: Optional[str] = None
+
+
+@strawberry.type
+class ClearSessionResultType:
+    """Result of purging a temporary session for Clear Conversation / New Private Session."""
+
+    success: bool
+    session_id: str
+    message: str
+
 

@@ -52,6 +52,7 @@ def _dict_to_history_item(record: dict) -> AnalysisHistoryItemType:
         ),
         authenticity_model=record.get("authenticity_model"),
         authenticity_indicators=indicators,
+        safety_category=record.get("safety_category"),
     )
 
 

@@ -18,13 +18,18 @@ from strawberry.types import Info
 import logging
 from app.graphql.schema import (
     AnalysisResultType,
+    ClearSessionResultType,
     DeleteAnalysisResultType,
+    EmergencyResponseType,
     FollowUpResultType,
+    HelplineType,
     SaveAnalysisResultType,
 )
+from app.config.settings import get_settings
 from app.middleware.auth import get_user_id_from_request
 from app.services.analysis_service import get_analysis_service
 from app.services.history_service import get_history_service
+from app.services.safety_service import get_safety_service
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +63,43 @@ class Mutation:
 
         # Validate base-64 decodability
         try:
-            base64.b64decode(image, validate=True)
+            raw_bytes = base64.b64decode(image, validate=True)
         except Exception as exc:
             raise ValueError(f"image is not valid base-64: {exc}") from exc
+
+        # Security: Enforce upload size limit
+        settings = get_settings()
+        if len(raw_bytes) > settings.max_upload_size_bytes:
+            raise ValueError(
+                f"Image payload size ({len(raw_bytes)} bytes) exceeds maximum allowed size ({settings.max_upload_size_mb} MB)."
+            )
+
+        # Security: MIME + Magic-byte validation (reject SVGs, HTML, executables, polyglots)
+        is_png = raw_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        is_jpeg = raw_bytes.startswith(b"\xff\xd8\xff")
+        is_webp = len(raw_bytes) >= 12 and raw_bytes.startswith(b"RIFF") and raw_bytes[8:12] == b"WEBP"
+        if not (is_png or is_jpeg or is_webp):
+            raise ValueError(
+                "Invalid image format or magic-bytes. Only genuine JPEG, PNG, and WebP images are permitted."
+            )
+
+        # Security: Image decompression-bomb protection (max 10 Megapixels)
+        import io
+        from PIL import Image
+
+        Image.MAX_IMAGE_PIXELS = 10_000_000
+        try:
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                img.verify()
+                w, h = img.size
+                if w * h > 10_000_000:
+                    raise ValueError(f"Image pixel dimensions ({w}x{h}) exceed maximum allowed 10 Megapixels.")
+        except Exception as exc:
+            if "DecompressionBombError" in type(exc).__name__:
+                raise ValueError("Image decompression bomb detected. Payload rejected.") from exc
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"Image decompression verification failed: {exc}") from exc
 
         # Validate authenticity values if provided
         valid_prob: Optional[float] = None
@@ -102,7 +141,7 @@ class Mutation:
                 str(ind).strip() for ind in authenticity_indicators if str(ind).strip()
             ]
 
-        # Prepare context for Gemma / Sarvam
+        # Detectra authenticity assessment context
         authenticity_context: Optional[str] = None
         if valid_status:
             authenticity_context = (
@@ -114,27 +153,94 @@ class Mutation:
                 f"(Note: The numerical detector result is authoritative. You may reference or explain this technical context, but do not contradict the status.)"
             )
 
+        # ── SAFETY CLASSIFICATION & POLICY ENFORCEMENT ───────────────────────
+        safety_svc = get_safety_service()
+        user_query_str = question if question is not strawberry.UNSET and question else ""
+        initial_safety_cat = safety_svc.classify_request(question=user_query_str)
+
+        if initial_safety_cat != "NORMAL":
+            safety_context = (
+                f"AUTHORITATIVE SAFETY POLICY:\n"
+                f"- Classified Safety State: {initial_safety_cat}\n"
+                f"- Absolute rule: Immediate physical life-safety takes precedence over technical analysis.\n"
+                f"- Strict constraints: Under NO circumstances provide advice that could facilitate self-harm, delay calling 112 emergency services, or touch unknown substances.\n"
+                f"- Probabilistic language: An image alone is NOT proof. Use tentative phrasing ('possible', 'may indicate', 'cannot be confirmed from the image alone'). Never make definitive diagnoses or criminal accusations.\n"
+                f"- You CANNOT downgrade or contradict this safety classification."
+            )
+        else:
+            safety_context = (
+                "SAFETY POLICY:\n"
+                "- Adhere to life-safety guidelines at all times.\n"
+                "- Observations are probabilistic; do NOT make definitive medical, criminal, or self-harm diagnoses from an image alone."
+            )
+
         service = get_analysis_service()
         result = await service.analyze(
             image_b64=image,
             question=question if question is not strawberry.UNSET else None,
             session_id=session_id if session_id is not strawberry.UNSET else None,
             authenticity_context=authenticity_context,
+            safety_context=safety_context,
         )
 
+        # ── POST-ANALYSIS SAFETY IMMUTABILITY & SANITIZATION ──────────────────
+        combined_output = (
+            f"{result.what_i_see} {result.what_is_happening} {result.next_action} "
+            f"{' '.join(result.steps or [])} {result.safety_warning or ''}"
+        )
+        emergency_resp = safety_svc.enforce_safety_policy(initial_safety_cat, combined_output)
+
+        # Sanitize language against definitive claims
+        sanitized_what_i_see = safety_svc.sanitize_claims(result.what_i_see)
+        sanitized_what_is_happening = safety_svc.sanitize_claims(result.what_is_happening)
+        sanitized_next_action = safety_svc.sanitize_claims(result.next_action)
+        sanitized_steps = [safety_svc.sanitize_claims(s) for s in result.steps] if result.steps else []
+        sanitized_warning = safety_svc.sanitize_claims(result.safety_warning) if result.safety_warning else None
+
+        # Prioritize immediate safety over further AI analysis when critical
+        if emergency_resp.emergency_required:
+            if emergency_resp.immediate_actions:
+                if emergency_resp.safety_category in (
+                    "POSSIBLE_SELF_HARM",
+                    "POSSIBLE_SUICIDE_ATTEMPT",
+                    "POSSIBLE_SERIOUS_INJURY",
+                    "POSSIBLE_UNCONSCIOUS_PERSON",
+                ):
+                    sanitized_next_action = emergency_resp.immediate_actions[0]
+            if not sanitized_warning:
+                sanitized_warning = f"{emergency_resp.title}: {emergency_resp.message}"
+
+        emergency_response_type: Optional[EmergencyResponseType] = None
+        if emergency_resp.safety_category != "NORMAL":
+            emergency_response_type = EmergencyResponseType(
+                safety_category=emergency_resp.safety_category,
+                severity=emergency_resp.severity,
+                emergency_required=emergency_resp.emergency_required,
+                title=emergency_resp.title,
+                message=emergency_resp.message,
+                immediate_actions=emergency_resp.immediate_actions,
+                avoid_actions=emergency_resp.avoid_actions,
+                helplines=[
+                    HelplineType(name=h.name, number=h.number)
+                    for h in emergency_resp.helplines
+                ],
+            )
+
         return AnalysisResultType(
-            what_i_see=result.what_i_see,
-            what_is_happening=result.what_is_happening,
-            next_action=result.next_action,
-            steps=result.steps,
+            what_i_see=sanitized_what_i_see,
+            what_is_happening=sanitized_what_is_happening,
+            next_action=sanitized_next_action,
+            steps=sanitized_steps,
             confidence=result.confidence,
-            safety_warning=result.safety_warning,
+            safety_warning=sanitized_warning,
             grounding_sources=result.grounding_sources,
             image_authenticity=valid_status,
             ai_generated_probability=valid_prob,
             authenticity_confidence=valid_conf,
             authenticity_model=valid_model if valid_status else None,
             authenticity_indicators=valid_indicators if valid_status else None,
+            safety_category=emergency_resp.safety_category,
+            emergency_response=emergency_response_type,
         )
 
     @strawberry.mutation(
@@ -183,6 +289,7 @@ class Mutation:
         authenticity_confidence: Optional[float] = None,
         authenticity_model: Optional[str] = None,
         authenticity_indicators: Optional[list[str]] = None,
+        safety_category: Optional[str] = None,
     ) -> SaveAnalysisResultType:
         request = info.context["request"]
         user_id = get_user_id_from_request(request)
@@ -232,6 +339,7 @@ class Mutation:
             authenticity_confidence=valid_conf,
             authenticity_model=authenticity_model,
             authenticity_indicators=authenticity_indicators,
+            safety_category=safety_category,
         )
 
         if record:
@@ -279,4 +387,21 @@ class Mutation:
         return DeleteAnalysisResultType(
             success=False,
             message="Failed to delete analysis.",
+        )
+
+    @strawberry.mutation(
+        description="Explicitly clear and purge a private temporary conversation session."
+    )
+    async def clear_session(
+        self,
+        session_id: str,
+    ) -> ClearSessionResultType:
+        if not session_id or not session_id.strip():
+            raise ValueError("session_id must not be empty.")
+        from app.services.session_manager import get_session_manager
+        cleared = get_session_manager().clear_session(session_id.strip())
+        return ClearSessionResultType(
+            success=cleared,
+            session_id=session_id.strip(),
+            message="Temporary session purged." if cleared else "Session not found or already expired.",
         )

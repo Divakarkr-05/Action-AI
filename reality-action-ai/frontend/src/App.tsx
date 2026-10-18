@@ -17,7 +17,7 @@ import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { LoadingState } from './components/LoadingState';
 import { useAuth } from './contexts/AuthContext';
-import { analyzeReality } from './services/graphql';
+import { analyzeReality, clearSession } from './services/graphql';
 import { saveAnalysisToHistory } from './services/history';
 import {
   detectImageAuthenticity,
@@ -32,7 +32,7 @@ export default function App() {
   const [question, setQuestion] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState(false);
-  const [sessionId] = useState(() => uuidv4());
+  const [sessionId, setSessionId] = useState(() => uuidv4());
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -86,6 +86,10 @@ export default function App() {
   }, []);
 
   const handleImageRemove = useCallback(() => {
+    if (sessionId) {
+      clearSession(sessionId).catch(() => {});
+    }
+    setSessionId(uuidv4());
     setImage(null);
     setResult(null);
     setError(null);
@@ -93,7 +97,7 @@ export default function App() {
     setAuthenticityState('idle');
     setAuthenticityResult(null);
     setAppState('empty');
-  }, []);
+  }, [sessionId]);
 
   const handleSaveToHistory = useCallback(async () => {
     if (!result || !user || isSaved || isSaving) return;
@@ -172,6 +176,10 @@ export default function App() {
   }, [image, question, user, sessionId, authenticityResult]);
 
   const handleReset = useCallback(() => {
+    if (sessionId) {
+      clearSession(sessionId).catch(() => {});
+    }
+    setSessionId(uuidv4());
     setImage(null);
     setResult(null);
     setError(null);
@@ -181,7 +189,7 @@ export default function App() {
     setAuthenticityState('idle');
     setAuthenticityResult(null);
     setAppState('empty');
-  }, []);
+  }, [sessionId]);
 
   const handleUploadClick = useCallback(() => {
     fileInputRef.current?.click();

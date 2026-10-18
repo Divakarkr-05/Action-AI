@@ -5,6 +5,7 @@
 import type { AnalysisResult } from '../types';
 import { AnalysisSection } from './AnalysisSection';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
+import { EmergencyBanner } from './EmergencyBanner';
 import { SafetyWarning } from './SafetyWarning';
 import { StepList } from './StepList';
 
@@ -23,6 +24,11 @@ export function AnalysisPanel({
   isSaving,
   onSave,
 }: AnalysisPanelProps) {
+  const hasEmergencyBanner =
+    result.emergencyResponse &&
+    result.emergencyResponse.severity &&
+    result.emergencyResponse.severity !== 'NORMAL';
+
   return (
     <div className="flex flex-col gap-5 animate-slide-in-right h-full overflow-y-auto no-scrollbar">
       {/* Panel header */}
@@ -57,8 +63,13 @@ export function AnalysisPanel({
         </div>
       </div>
 
-      {/* Safety warning — always first if present */}
-      {result.safetyWarning && (
+      {/* Prominent Emergency / Safety Banner */}
+      {hasEmergencyBanner && (
+        <EmergencyBanner response={result.emergencyResponse!} />
+      )}
+
+      {/* Standard Safety Warning (if present and not already displayed by EmergencyBanner) */}
+      {result.safetyWarning && !hasEmergencyBanner && (
         <SafetyWarning warning={result.safetyWarning} />
       )}
 

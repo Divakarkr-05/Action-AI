@@ -22,6 +22,38 @@ export interface ImageAuthenticityResult {
   error?: string | null;
 }
 
+export type SafetyCategory =
+  | 'NORMAL'
+  | 'POSSIBLE_DRUG_RELATED'
+  | 'POSSIBLE_SELF_HARM'
+  | 'POSSIBLE_SUICIDE_ATTEMPT'
+  | 'POSSIBLE_SERIOUS_INJURY'
+  | 'POSSIBLE_UNCONSCIOUS_PERSON'
+  | 'EMERGENCY_UNCERTAIN';
+
+export type SafetySeverity =
+  | 'NORMAL'
+  | 'INFO'
+  | 'WARNING'
+  | 'URGENT'
+  | 'EMERGENCY';
+
+export interface Helpline {
+  name: string;
+  number: string;
+}
+
+export interface EmergencyResponse {
+  safetyCategory: SafetyCategory;
+  severity: SafetySeverity;
+  emergencyRequired: boolean;
+  title: string;
+  message: string;
+  immediateActions: string[];
+  avoidActions: string[];
+  helplines: Helpline[];
+}
+
 export interface AnalysisResult {
   whatISee: string;
   whatIsHappening: string;
@@ -35,6 +67,8 @@ export interface AnalysisResult {
   authenticityConfidence?: number | null;
   authenticityModel?: string | null;
   authenticityIndicators?: string[] | null;
+  safetyCategory?: SafetyCategory | null;
+  emergencyResponse?: EmergencyResponse | null;
 }
 
 export interface FollowUpResult {

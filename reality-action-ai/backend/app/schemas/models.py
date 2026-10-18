@@ -11,6 +11,22 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class Helpline(BaseModel):
+    name: str
+    number: str
+
+
+class EmergencyResponse(BaseModel):
+    safety_category: str
+    severity: str
+    emergency_required: bool
+    title: str
+    message: str
+    immediate_actions: List[str] = Field(default_factory=list)
+    avoid_actions: List[str] = Field(default_factory=list)
+    helplines: List[Helpline] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     """Structured output produced by the AI analysis service."""
 
@@ -40,6 +56,12 @@ class AnalysisResult(BaseModel):
     )
     authenticity_indicators: Optional[List[str]] = Field(
         default_factory=list, description="Authenticity indicators."
+    )
+    safety_category: Optional[str] = Field(
+        default="NORMAL", description="Safety category classification."
+    )
+    emergency_response: Optional[EmergencyResponse] = Field(
+        None, description="Structured emergency advisory when danger is detected."
     )
 
 

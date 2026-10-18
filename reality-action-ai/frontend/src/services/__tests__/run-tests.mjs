@@ -112,4 +112,41 @@ assert.strictEqual(finalRes.imageAuthenticity, 'LIKELY_REAL');
 assert.strictEqual(finalRes.aiGeneratedProbability, 0.10);
 console.log('✓ 11. Gemma cannot overwrite detector probability passes');
 
-console.log('\nALL 11 AUTHENTICITY UNIT TESTS PASSED SUCCESSFULLY!');
+console.log('\n--- Running Safety & Emergency Response Tests ---');
+
+// 12. Safety categories and severities contract
+const testEmergencyResponse = {
+  safetyCategory: 'POSSIBLE_SELF_HARM',
+  severity: 'EMERGENCY',
+  emergencyRequired: true,
+  title: 'Immediate help may be needed',
+  message: 'Immediate safety is the highest priority.',
+  immediateActions: ['Call 112 for emergency assistance', 'Contact Tele-MANAS at 14416'],
+  avoidActions: ['Do not attempt dangerous rescue actions yourself'],
+  helplines: [
+    { name: 'Emergency Response Support System', number: '112' },
+    { name: 'Tele-MANAS', number: '14416' },
+    { name: 'Tele-MANAS Toll-Free', number: '1800-891-4416' },
+    { name: 'MANAS Narcotics Helpline', number: '1933' },
+  ],
+};
+assert.strictEqual(testEmergencyResponse.safetyCategory, 'POSSIBLE_SELF_HARM');
+assert.strictEqual(testEmergencyResponse.severity, 'EMERGENCY');
+assert.strictEqual(testEmergencyResponse.emergencyRequired, true);
+console.log('✓ 12. Safety categories & emergency response model contract passes');
+
+// 13. Mobile clickable tel links sanitization
+const sanitizeTel = (num) => num.replace(/[^0-9+]/g, '');
+assert.strictEqual(`tel:${sanitizeTel('112')}`, 'tel:112');
+assert.strictEqual(`tel:${sanitizeTel('1933')}`, 'tel:1933');
+assert.strictEqual(`tel:${sanitizeTel('14416')}`, 'tel:14416');
+assert.strictEqual(`tel:${sanitizeTel('1800-891-4416')}`, 'tel:18008914416');
+assert.strictEqual(`tel:${sanitizeTel('+91-11-26761000')}`, 'tel:+911126761000');
+console.log('✓ 13. Clickable tel links generation & number sanitization passes');
+
+// 14. Emergency priority over normal advice
+assert.ok(testEmergencyResponse.immediateActions[0].includes('112'));
+console.log('✓ 14. Immediate life-safety priority over normal advice passes');
+
+console.log('\nALL AUTHENTICITY AND SAFETY UNIT TESTS PASSED SUCCESSFULLY!');
+

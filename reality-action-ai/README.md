@@ -17,6 +17,7 @@
 - [Frontend Setup](#frontend-setup)
 - [Environment Variables](#environment-variables)
 - [GraphQL API Reference](#graphql-api-reference)
+- [Safety & Emergency Response](#safety--emergency-response)
 - [Safety & Verification](#safety--verification)
 
 ---
@@ -31,14 +32,16 @@ The system processes the image using multimodal AI to return:
 3. **What to Do Next** – Primary high-priority recommendation.
 4. **Step-by-Step Instructions** – Numbered action steps to solve the issue.
 5. **Confidence Rating & Safety Warnings** – Prominent hazard warnings (e.g. electrical shock, high pressure) and clear uncertainty quantification.
-6. **Follow-Up Interactive Chat** – Conversational Q&A grounded on the image analysis session.
-7. **Cloud History & Session Persistence** – User authentication and history storage via Supabase with Row Level Security (RLS).
+6. **Safety & Emergency Response Banner** – Immediate life-safety advisory with verified clickable helplines (`112`, `1933`, `14416`, `1800-891-4416`) when danger is detected.
+7. **Follow-Up Interactive Chat** – Conversational Q&A grounded on the image analysis session.
+8. **Cloud History & Session Persistence** – User authentication and history storage via Supabase with Row Level Security (RLS).
 
 ---
 
 ## Key Features
 
 - **Multi-Modal Inspection**: Drag-and-drop file upload or live camera capture directly from the browser.
+- **Safety & Emergency Response Layer**: Authoritative detection and response for potential acute hazards, self-harm, drug risks, and injuries.
 - **Structured AI Insights**: Clean separation of observation, diagnosis, and action plan.
 - **Conversational Follow-Up**: Ask questions in natural language about specific steps or components.
 - **User Authentication**: Secure email & password authentication powered by Supabase Auth (`/login`, `/signup`).
@@ -53,23 +56,33 @@ The system processes the image using multimodal AI to return:
 ```
 REALITY (Uploaded / Captured Image)
    ↓
+IMAGE VALIDATION (Non-empty, base64 check)
+   ↓
 AUTHENTICITY CHECK (Detectra v3 via onnxruntime-web in browser)
    ├── WebGPU EP (Shader execution)
    └── WASM EP Fallback (CPU SIMD)
    ↓
-AI-GENERATED PROBABILITY & CLASSIFICATION
-   ├── LIKELY_REAL (p <= 0.25)
-   ├── LIKELY_AI_GENERATED (p >= 0.75)
-   ├── UNCERTAIN (0.25 < p < 0.75)
-   └── UNAVAILABLE (on runtime error)
+SAFETY CLASSIFICATION (Authoritative Pre-flight)
+   ├── NORMAL
+   ├── POSSIBLE_DRUG_RELATED
+   ├── POSSIBLE_SELF_HARM
+   ├── POSSIBLE_SUICIDE_ATTEMPT
+   ├── POSSIBLE_SERIOUS_INJURY
+   ├── POSSIBLE_UNCONSCIOUS_PERSON
+   └── EMERGENCY_UNCERTAIN
+   ↓
+SAFETY POLICY INJECTION (Authoritative system context)
    ↓
 UNDERSTANDING & REASONING (Gemma 4 / Sarvam multimodal pipeline)
-   * Gemma receives detector assessment strictly as CONTEXT
-   * Numerical detector probability is authoritative and immutable
+   * Gemma receives safety state & detector assessment as CONTEXT
+   * Gemma CANNOT downgrade emergency states to NORMAL
+   ↓
+SAFETY IMMUTABILITY & CLAIM SANITIZATION
+   * Enforces tentative, non-definitive phrasing
    ↓
 GROUNDING (RAG over technical documentation)
    ↓
-ACTION GUIDANCE
+ACTION RESPONSE & EMERGENCY ADVISORY
    ↓
 HISTORY PERSISTENCE (Supabase PostgreSQL with RLS)
 ```
@@ -361,8 +374,39 @@ mutation DeleteAnalysis($id: String!) {
 
 ---
 
+## Safety & Emergency Response
+
+Reality → Action AI features an authoritative **Safety & Emergency Response Layer** that evaluates uploaded images and user prompts for acute life-safety conditions, drug-related hazards, and medical crises.
+
+### Supported Safety Categories
+
+1. `NORMAL` – Technical inspections with no acute life-safety emergency.
+2. `POSSIBLE_DRUG_RELATED` – Unidentified substances or contraband. Surfaces MANAS (1933) and NCB contact (+91-11-26761000). Emphasizes: do not touch, consume, taste, smell, or confront.
+3. `POSSIBLE_SELF_HARM` – Crisis indicators. Prioritizes immediate safety over technical analysis. Displays 112 and Tele-MANAS (14416 / 1800-891-4416).
+4. `POSSIBLE_SUICIDE_ATTEMPT` – Acute crisis response with verified 24x7 mental health resources.
+5. `POSSIBLE_SERIOUS_INJURY` – Potential acute trauma or bleeding. Prompts calling 112 and non-movement.
+6. `POSSIBLE_UNCONSCIOUS_PERSON` – Unresponsive individual protocol.
+7. `EMERGENCY_UNCERTAIN` – Ambiguous acute physical danger.
+
+### Core Safety Principles
+
+- **Image Analysis is NOT Proof**: Language is strictly probabilistic (*"possible"*, *"may indicate"*, *"cannot be confirmed from the image alone"*). Definitive criminal, medical, or suicide declarations are prohibited.
+- **Safety Policy Immutability**: Gemma and Sarvam receive authoritative safety context and **CANNOT downgrade** any emergency state to `NORMAL`.
+- **No Automatic Contact or Transmission**: The platform **NEVER** automatically calls emergency services, police, NCB, hospitals, or third parties, and never transmits images to law enforcement. The user alone makes that decision.
+- **Process → Respond → Forget**: Safety analysis is transient. No permanent safety-profile memory is maintained, no emergency images are hoarded, and raw image base64 is never logged.
+- **Verified Emergency Helplines (India)**:
+  - `112` — National Emergency Response Support System (ERSS)
+  - `1933` — MANAS / National Narcotics Helpline
+  - `+91-11-26761000` — NCB Control Room
+  - `14416` / `1800-891-4416` — Tele-MANAS (24x7 Mental Health Support)
+
+For full documentation and technical architecture, see [docs/SAFETY.md](docs/SAFETY.md).
+
+---
+
 ## Safety & Verification
 
 1. **Safety First**: Safety warnings are prioritized in both the AI prompt templates and the UI rendering, highlighting physical danger (electrical shock, hazardous fluids, moving parts).
 2. **Confidence Scoring**: High-precision indicators show confidence ratings so users know when to verify findings manually.
 3. **Protected Data Access**: All user records are guarded by PostgreSQL Row-Level Security; requests require a valid Supabase JWT Bearer token.
+

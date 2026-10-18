@@ -167,6 +167,7 @@ class GemmaService:
         question: Optional[str] = None,
         session_id: Optional[str] = None,
         authenticity_context: Optional[str] = None,
+        safety_context: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Analyze a real-world image using Gemma 4 multimodal chat completion.
@@ -209,6 +210,8 @@ class GemmaService:
 
         # Compose final user text with technical grounding references
         prompt_parts = []
+        if safety_context:
+            prompt_parts.append(safety_context)
         if authenticity_context:
             prompt_parts.append(authenticity_context)
         if rag_prompt_section:
@@ -276,6 +279,8 @@ class GemmaService:
             ],
         }
         if session_id:
+            from app.services.session_manager import get_session_manager
+            get_session_manager().set_session(session_id, session_context)
             self._sessions[session_id] = session_context
         self._latest_session = session_context
 
@@ -300,8 +305,11 @@ class GemmaService:
         if not question or not question.strip():
             raise ValueError("Question must not be empty.")
 
-        # Retrieve prior session context
-        ctx = self._sessions.get(session_id) or self._latest_session
+        # Retrieve prior session context via SessionManager (30m TTL, strictly isolated)
+        from app.services.session_manager import get_session_manager
+        ctx = get_session_manager().get_session(session_id)
+        if ctx is None and session_id in self._sessions:
+            ctx = self._sessions.get(session_id)
 
         context_summary = ""
         if ctx and "analysis" in ctx:

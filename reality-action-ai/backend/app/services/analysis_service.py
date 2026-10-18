@@ -158,6 +158,7 @@ class MockAnalysisService:
         question: Optional[str] = None,
         session_id: Optional[str] = None,  # noqa: ARG002
         authenticity_context: Optional[str] = None,  # noqa: ARG002
+        safety_context: Optional[str] = None,  # noqa: ARG002
     ) -> AnalysisResult:
         # Simulate a short AI processing delay
         await asyncio.sleep(random.uniform(1.2, 2.5))
@@ -180,7 +181,11 @@ class MockAnalysisService:
             pass
 
         mock["grounding_sources"] = grounding_sources
-        return AnalysisResult(**mock)
+        res_obj = AnalysisResult(**mock)
+        if session_id:
+            from app.services.session_manager import get_session_manager
+            get_session_manager().set_session(session_id, {"analysis": res_obj, "image_b64": image_b64})
+        return res_obj
 
     async def ask_follow_up(
         self,

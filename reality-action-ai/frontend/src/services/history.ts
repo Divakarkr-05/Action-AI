@@ -31,6 +31,7 @@ export interface AnalysisHistoryItem {
   authenticityConfidence: number | null;
   authenticityModel: string | null;
   authenticityIndicators: string[] | null;
+  safetyCategory: string | null;
 }
 
 export interface SaveAnalysisResult {
@@ -101,6 +102,7 @@ const ANALYSIS_HISTORY_QUERY = /* GraphQL */ `
       authenticityConfidence
       authenticityModel
       authenticityIndicators
+      safetyCategory
     }
   }
 `;
@@ -123,6 +125,7 @@ const ANALYSIS_BY_ID_QUERY = /* GraphQL */ `
       authenticityConfidence
       authenticityModel
       authenticityIndicators
+      safetyCategory
     }
   }
 `;
@@ -144,6 +147,7 @@ const SAVE_ANALYSIS_MUTATION = /* GraphQL */ `
     $authenticityConfidence: Float
     $authenticityModel: String
     $authenticityIndicators: [String!]
+    $safetyCategory: String
   ) {
     saveAnalysis(
       question: $question
@@ -159,6 +163,7 @@ const SAVE_ANALYSIS_MUTATION = /* GraphQL */ `
       authenticityConfidence: $authenticityConfidence
       authenticityModel: $authenticityModel
       authenticityIndicators: $authenticityIndicators
+      safetyCategory: $safetyCategory
     ) {
       success
       historyId
@@ -227,6 +232,7 @@ export async function saveAnalysisToHistory(
           : null,
       authenticityModel: result.authenticityModel || null,
       authenticityIndicators: result.authenticityIndicators || null,
+      safetyCategory: result.safetyCategory || null,
     },
   );
   return data.saveAnalysis;

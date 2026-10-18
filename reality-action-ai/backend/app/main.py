@@ -17,6 +17,12 @@ from strawberry.fastapi import GraphQLRouter
 from app.config.settings import get_settings
 from app.graphql.mutations import Mutation
 from app.graphql.queries import Query
+from app.middleware.security import (
+    MaxDepthValidationRule,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
+from strawberry.extensions import AddValidationRules
 
 # ── Application factory ───────────────────────────────────────
 
@@ -31,17 +37,25 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
+    # ── Security & Headers Middleware ──────────────────────────
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
+
     # ── CORS ───────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
 
-    # ── GraphQL ────────────────────────────────────────────────
-    gql_schema = strawberry.Schema(query=Query, mutation=Mutation)
+    # ── GraphQL (with AST Depth Limit validation) ───────────────
+    gql_schema = strawberry.Schema(
+        query=Query,
+        mutation=Mutation,
+        extensions=[AddValidationRules([MaxDepthValidationRule])],
+    )
     graphql_app = GraphQLRouter(
         gql_schema,
         graphql_ide="graphiql",   # set to None in production

@@ -43,6 +43,7 @@ class HistoryService:
         authenticity_confidence: Optional[float] = None,
         authenticity_model: Optional[str] = None,
         authenticity_indicators: Optional[List[str]] = None,
+        safety_category: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Persist a successful analysis result to the database.
@@ -74,6 +75,8 @@ class HistoryService:
             full_payload["authenticity_model"] = authenticity_model
         if authenticity_indicators is not None:
             full_payload["authenticity_indicators"] = authenticity_indicators
+        if safety_category is not None:
+            full_payload["safety_category"] = safety_category
 
         try:
             logger.info("Supabase INSERT initiating for user_id=%s", user_id)
@@ -87,11 +90,11 @@ class HistoryService:
                 err_str = str(insert_err)
                 if any(
                     col in err_str
-                    for col in ("image_authenticity", "ai_generated_probability", "authenticity_")
+                    for col in ("image_authenticity", "ai_generated_probability", "authenticity_", "safety_category")
                 ):
                     logger.warning(
-                        "Supabase analysis_history table does not yet have authenticity columns. "
-                        "Retrying with base payload. Please apply the migration script."
+                        "Supabase analysis_history table does not yet have all extended columns. "
+                        "Retrying with base payload."
                     )
                     result = (
                         self._client.table("analysis_history")

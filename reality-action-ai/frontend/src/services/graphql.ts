@@ -88,6 +88,20 @@ const ANALYZE_REALITY_MUTATION = /* GraphQL */ `
       authenticityConfidence
       authenticityModel
       authenticityIndicators
+      safetyCategory
+      emergencyResponse {
+        safetyCategory
+        severity
+        emergencyRequired
+        title
+        message
+        immediateActions
+        avoidActions
+        helplines {
+          name
+          number
+        }
+      }
     }
   }
 `;
@@ -158,3 +172,27 @@ export async function fetchHealth() {
     health: { status: string; version: string; aiMode: string; model: string };
   }>(HEALTH_QUERY);
 }
+
+const CLEAR_SESSION_MUTATION = /* GraphQL */ `
+  mutation ClearSession($sessionId: String!) {
+    clearSession(sessionId: $sessionId) {
+      success
+      sessionId
+      message
+    }
+  }
+`;
+
+export async function clearSession(sessionId: string): Promise<boolean> {
+  try {
+    const data = await gqlFetch<{ clearSession: { success: boolean } }>(
+      CLEAR_SESSION_MUTATION,
+      { sessionId },
+    );
+    return data.clearSession.success;
+  } catch (err) {
+    console.warn('Failed to clear session on backend:', err);
+    return false;
+  }
+}
+
