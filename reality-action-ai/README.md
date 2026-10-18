@@ -51,32 +51,64 @@ The system processes the image using multimodal AI to return:
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   React Frontend                       │
-│    (Vite + TypeScript + Tailwind CSS + Supabase JS)    │
-│  Pages: / (Workspace), /history, /login, /signup       │
-└───────────────┬────────────────────────┬───────────────┘
-                │                        │
-       Bearer JWT Auth Token       GraphQL POST
-                │                        │
-                ▼                        ▼
-┌────────────────────────────────────────────────────────┐
-│                   FastAPI Backend                      │
-│        - Strawberry GraphQL Engine                     │
-│        - PyJWT Auth & Middleware Context               │
-│        - Analysis Service & History Service            │
-└───────────────┬────────────────────────┬───────────────┘
-                │                        │
-       Service Role Key          Multimodal Prompts
-                │                        │
-                ▼                        ▼
-┌────────────────────────┐      ┌────────────────────────┐
-│    Supabase Cloud      │      │  Hugging Face / Gemma  │
-│  - PostgreSQL + RLS    │      │  - google/gemma-4      │
-│  - auth.users          │      │  - Realistic Mock Mode │
-│  - analysis_history    │      └────────────────────────┘
-└────────────────────────┘
+REALITY (Uploaded / Captured Image)
+   ↓
+AUTHENTICITY CHECK (Detectra v3 via onnxruntime-web in browser)
+   ├── WebGPU EP (Shader execution)
+   └── WASM EP Fallback (CPU SIMD)
+   ↓
+AI-GENERATED PROBABILITY & CLASSIFICATION
+   ├── LIKELY_REAL (p <= 0.25)
+   ├── LIKELY_AI_GENERATED (p >= 0.75)
+   ├── UNCERTAIN (0.25 < p < 0.75)
+   └── UNAVAILABLE (on runtime error)
+   ↓
+UNDERSTANDING & REASONING (Gemma 4 / Sarvam multimodal pipeline)
+   * Gemma receives detector assessment strictly as CONTEXT
+   * Numerical detector probability is authoritative and immutable
+   ↓
+GROUNDING (RAG over technical documentation)
+   ↓
+ACTION GUIDANCE
+   ↓
+HISTORY PERSISTENCE (Supabase PostgreSQL with RLS)
 ```
+
+### Image Authenticity Layer (Detectra v3)
+
+The authenticity detector runs 100% locally in the user's browser using `onnxruntime-web`, eliminating any external detector API calls or third-party image sharing.
+
+- **Model**: Detectra v3 (`TensorFold/detectra-v1`), 43.7 MB ONNX format.
+- **Model Path**: Served deterministically from `/models/detectra.onnx` via `frontend/public/models/detectra.onnx`.
+- **Model Preprocessing**:
+  1. Load image and scale shortest edge to 440 pixels.
+  2. Center crop to 384 x 384 pixels.
+  3. Normalize pixels to [0, 1].
+  4. Apply ImageNet normalization (mean: `[0.485, 0.456, 0.406]`, std: `[0.229, 0.224, 0.225]`).
+  5. Tensor format: `pixel_values`, float32, shape `[1, 3, 384, 384]`.
+  6. Output: Single logit tensor `logit` converted via sigmoid: $\text{probability} = \frac{1}{1 + e^{-\text{logit}}}$.
+- **Configurable Product Thresholds**:
+  - `probability >= 0.75` $\rightarrow$ `LIKELY_AI_GENERATED`
+  - `probability <= 0.25` $\rightarrow$ `LIKELY_REAL`
+  - `0.25 < probability < 0.75` $\rightarrow$ `UNCERTAIN`
+  - Error/Failure $\rightarrow$ `UNAVAILABLE`
+- **Execution Strategy**:
+  - Tries hardware-accelerated **WebGPU** first for near-instant inference.
+  - Automatically falls back to multi-threaded **WASM** if WebGPU is unsupported.
+  - Caches both session and result per unique image to prevent re-computation.
+  - Non-blocking: background check runs without halting image browsing or prompt typing.
+- **Limitations**:
+  - AI-image detection is probabilistic and can be affected by compression, resizing, screenshots, editing, camera ISP pipelines, and unseen generators.
+  - Never presented as forensic proof; non-alarmist UI phrasing is enforced.
+- **Evaluation & Benchmarks**:
+  - Comprehensive evaluation framework located in `evaluation/authenticity/`.
+
+### Large Model Storage Strategy
+- The model file `models/detectra.onnx` (~43.7 MB) is excluded from regular git commits via `.gitignore`.
+- **Recommended Setup**:
+  - Option A: Git LFS tracking `*.onnx` for teams using GitHub LFS.
+  - Option B: Automated setup script (`npm run setup-model` or curl from releases).
+  - Development: Zero-copy hard-link between `models/detectra.onnx` and `frontend/public/models/detectra.onnx` (`mklink /H`).
 
 ---
 

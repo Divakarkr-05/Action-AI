@@ -26,6 +26,11 @@ export interface AnalysisHistoryItem {
   safetyWarning: string | null;
   imageUrl: string | null;
   createdAt: string | null;
+  imageAuthenticity: string | null;
+  aiGeneratedProbability: number | null;
+  authenticityConfidence: number | null;
+  authenticityModel: string | null;
+  authenticityIndicators: string[] | null;
 }
 
 export interface SaveAnalysisResult {
@@ -91,6 +96,11 @@ const ANALYSIS_HISTORY_QUERY = /* GraphQL */ `
       safetyWarning
       imageUrl
       createdAt
+      imageAuthenticity
+      aiGeneratedProbability
+      authenticityConfidence
+      authenticityModel
+      authenticityIndicators
     }
   }
 `;
@@ -108,6 +118,11 @@ const ANALYSIS_BY_ID_QUERY = /* GraphQL */ `
       safetyWarning
       imageUrl
       createdAt
+      imageAuthenticity
+      aiGeneratedProbability
+      authenticityConfidence
+      authenticityModel
+      authenticityIndicators
     }
   }
 `;
@@ -124,6 +139,11 @@ const SAVE_ANALYSIS_MUTATION = /* GraphQL */ `
     $confidence: Float!
     $safetyWarning: String
     $imageUrl: String
+    $imageAuthenticity: String
+    $aiGeneratedProbability: Float
+    $authenticityConfidence: Float
+    $authenticityModel: String
+    $authenticityIndicators: [String!]
   ) {
     saveAnalysis(
       question: $question
@@ -134,6 +154,11 @@ const SAVE_ANALYSIS_MUTATION = /* GraphQL */ `
       confidence: $confidence
       safetyWarning: $safetyWarning
       imageUrl: $imageUrl
+      imageAuthenticity: $imageAuthenticity
+      aiGeneratedProbability: $aiGeneratedProbability
+      authenticityConfidence: $authenticityConfidence
+      authenticityModel: $authenticityModel
+      authenticityIndicators: $authenticityIndicators
     ) {
       success
       historyId
@@ -191,6 +216,17 @@ export async function saveAnalysisToHistory(
       confidence: result.confidence,
       safetyWarning: result.safetyWarning || null,
       imageUrl: imageUrl || null,
+      imageAuthenticity: result.imageAuthenticity || null,
+      aiGeneratedProbability:
+        result.aiGeneratedProbability !== undefined
+          ? result.aiGeneratedProbability
+          : null,
+      authenticityConfidence:
+        result.authenticityConfidence !== undefined
+          ? result.authenticityConfidence
+          : null,
+      authenticityModel: result.authenticityModel || null,
+      authenticityIndicators: result.authenticityIndicators || null,
     },
   );
   return data.saveAnalysis;

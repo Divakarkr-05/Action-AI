@@ -8,7 +8,11 @@
  *   Component → hook → graphql.ts → /graphql → FastAPI + Strawberry → AI Service
  */
 
-import type { AnalysisResult, FollowUpResult } from '../types';
+import type {
+  AnalysisResult,
+  FollowUpResult,
+  ImageAuthenticityResult,
+} from '../types';
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -52,8 +56,26 @@ async function gqlFetch<T>(
 // ── Mutations ─────────────────────────────────────────────────────────────
 
 const ANALYZE_REALITY_MUTATION = /* GraphQL */ `
-  mutation AnalyzeReality($image: String!, $question: String, $sessionId: String) {
-    analyzeReality(image: $image, question: $question, sessionId: $sessionId) {
+  mutation AnalyzeReality(
+    $image: String!
+    $question: String
+    $sessionId: String
+    $imageAuthenticity: String
+    $aiGeneratedProbability: Float
+    $authenticityConfidence: Float
+    $authenticityModel: String
+    $authenticityIndicators: [String!]
+  ) {
+    analyzeReality(
+      image: $image
+      question: $question
+      sessionId: $sessionId
+      imageAuthenticity: $imageAuthenticity
+      aiGeneratedProbability: $aiGeneratedProbability
+      authenticityConfidence: $authenticityConfidence
+      authenticityModel: $authenticityModel
+      authenticityIndicators: $authenticityIndicators
+    ) {
       whatISee
       whatIsHappening
       nextAction
@@ -61,6 +83,11 @@ const ANALYZE_REALITY_MUTATION = /* GraphQL */ `
       confidence
       safetyWarning
       groundingSources
+      imageAuthenticity
+      aiGeneratedProbability
+      authenticityConfidence
+      authenticityModel
+      authenticityIndicators
     }
   }
 `;
@@ -96,10 +123,20 @@ export async function analyzeReality(
   image: string,
   question?: string,
   sessionId?: string,
+  authenticity?: ImageAuthenticityResult | null,
 ): Promise<AnalysisResult> {
   const data = await gqlFetch<{ analyzeReality: AnalysisResult }>(
     ANALYZE_REALITY_MUTATION,
-    { image, question: question ?? null, sessionId: sessionId ?? null },
+    {
+      image,
+      question: question ?? null,
+      sessionId: sessionId ?? null,
+      imageAuthenticity: authenticity?.status ?? null,
+      aiGeneratedProbability: authenticity?.aiGeneratedProbability ?? null,
+      authenticityConfidence: authenticity?.confidence ?? null,
+      authenticityModel: authenticity?.model ?? null,
+      authenticityIndicators: authenticity?.indicators ?? null,
+    },
   );
   return data.analyzeReality;
 }

@@ -23,6 +23,11 @@ class AnalysisResultType:
     confidence: float
     safety_warning: Optional[str] = None
     grounding_sources: Optional[List[str]] = None
+    image_authenticity: Optional[str] = None
+    ai_generated_probability: Optional[float] = None
+    authenticity_confidence: Optional[float] = None
+    authenticity_model: Optional[str] = None
+    authenticity_indicators: Optional[List[str]] = None
 
 
 @strawberry.type
@@ -60,6 +65,11 @@ class AnalysisHistoryItemType:
     safety_warning: Optional[str] = None
     image_url: Optional[str] = None
     created_at: Optional[str] = None
+    image_authenticity: Optional[str] = None
+    ai_generated_probability: Optional[float] = None
+    authenticity_confidence: Optional[float] = None
+    authenticity_model: Optional[str] = None
+    authenticity_indicators: Optional[List[str]] = None
 
 
 @strawberry.type

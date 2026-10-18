@@ -84,6 +84,11 @@ export function HistoryPage() {
             steps: item.steps ?? [],
             confidence: item.confidence ?? 0.85,
             safetyWarning: item.safetyWarning,
+            imageAuthenticity: (item.imageAuthenticity as any) ?? null,
+            aiGeneratedProbability: item.aiGeneratedProbability,
+            authenticityConfidence: item.authenticityConfidence,
+            authenticityModel: item.authenticityModel,
+            authenticityIndicators: item.authenticityIndicators,
           },
           restoredQuestion: item.question ?? '',
         },
@@ -278,6 +283,23 @@ export function HistoryPage() {
                             : 'Unknown Date'}
                         </span>
                         <div className="flex items-center gap-2">
+                          {item.imageAuthenticity && (
+                            <span
+                              className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase tracking-wider font-semibold ${
+                                item.imageAuthenticity === 'LIKELY_REAL'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                  : item.imageAuthenticity === 'LIKELY_AI_GENERATED'
+                                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                  : 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                              }`}
+                            >
+                              {item.imageAuthenticity === 'LIKELY_REAL'
+                                ? 'LIKELY REAL'
+                                : item.imageAuthenticity === 'LIKELY_AI_GENERATED'
+                                ? 'LIKELY AI'
+                                : 'UNCERTAIN'}
+                            </span>
+                          )}
                           {item.confidence !== null && (
                             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-lime-400/10 text-lime-400/90 border border-lime-400/20">
                               {Math.round(item.confidence * 100)}%

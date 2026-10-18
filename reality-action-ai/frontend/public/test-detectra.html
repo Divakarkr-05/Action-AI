@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Detectra v3 In-Browser Real Model Inference Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js"></script>
+  <style>
+    body { font-family: monospace; background: #0c0d0e; color: #e6e6e6; padding: 24px; }
+    h1 { color: #a3e635; margin-bottom: 8px; }
+    .card { background: #16181a; border: 1px solid #2a2e33; padding: 16px; margin-bottom: 16px; border-radius: 8px; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; }
+    .likely-real { background: rgba(52, 211, 153, 0.2); color: #34d399; border: 1px solid #34d399; }
+    .likely-ai { background: rgba(251, 191, 36, 0.2); color: #fbbf24; border: 1px solid #fbbf24; }
+    .uncertain { background: rgba(96, 165, 250, 0.2); color: #60a5fa; border: 1px solid #60a5fa; }
+    .thumb { max-width: 150px; max-height: 150px; border-radius: 6px; border: 1px solid #333; margin-top: 8px; }
+    #log { white-space: pre-wrap; font-size: 12px; color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <h1>Detectra v3 Browser Inference Verification</h1>
+  <p id="status">Initializing ONNX Runtime Web session for /models/detectra.onnx...</p>
+  <div id="results"></div>
+  <div class="card">
+    <h3>Diagnostic Execution Logs:</h3>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+    const resultsEl = document.getElementById('results');
+
+    function log(msg) {
+      console.log(msg);
+      logEl.textContent += msg + '\n';
+    }
+
+    const testImages = [
+      { name: "Real Technical Photograph", url: "/test-images/real_pcb.jpg", expected: "REAL" },
+      { name: "Known AI-Generated Image (Sci-Fi Engine)", url: "/test-images/ai_drone.jpg", expected: "AI" },
+      { name: "Ambiguous / Compressed Screenshot", url: "/test-images/ambiguous.png", expected: "AMBIGUOUS" }
+    ];
+
+    async function preprocessImage(img) {
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+
+      // 1. Resize shortest edge to 440px
+      let targetWidth, targetHeight;
+      if (width < height) {
+        targetWidth = 440;
+        targetHeight = Math.round((height * 440) / width);
+      } else {
+        targetHeight = 440;
+        targetWidth = Math.round((width * 440) / height);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+      // 2. Center crop to 384x384
+      const cropSize = 384;
+      const startX = Math.max(0, Math.floor((targetWidth - cropSize) / 2));
+      const startY = Math.max(0, Math.floor((targetHeight - cropSize) / 2));
+      const imgData = ctx.getImageData(startX, startY, cropSize, cropSize);
+      const data = imgData.data;
+
+      // 3. ImageNet normalization: mean [0.485, 0.456, 0.406], std [0.229, 0.224, 0.225]
+      const mean = [0.485, 0.456, 0.406];
+      const std = [0.229, 0.224, 0.225];
+      const numPixels = cropSize * cropSize;
+      const float32Data = new Float32Array(3 * numPixels);
+
+      for (let i = 0; i < numPixels; i++) {
+        const srcIdx = i * 4;
+        const r = data[srcIdx] / 255.0;
+        const g = data[srcIdx + 1] / 255.0;
+        const b = data[srcIdx + 2] / 255.0;
+
+        float32Data[i] = (r - mean[0]) / std[0];
+        float32Data[numPixels + i] = (g - mean[1]) / std[1];
+        float32Data[2 * numPixels + i] = (b - mean[2]) / std[2];
+      }
+
+      return float32Data;
+    }
+
+    function sigmoid(z) {
+      return 1 / (1 + Math.exp(-z));
+    }
+
+    function classify(prob) {
+      if (prob >= 0.75) return { status: "LIKELY_AI_GENERATED", badgeClass: "likely-ai", conf: prob };
+      if (prob <= 0.25) return { status: "LIKELY_REAL", badgeClass: "likely-real", conf: 1 - prob };
+      return { status: "UNCERTAIN", badgeClass: "uncertain", conf: Math.max(prob, 1 - prob) };
+    }
+
+    async function runVerification() {
+      try {
+        log("Configuring ONNX Runtime Web...");
+        ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
+        ort.env.wasm.numThreads = 1;
+
+        let epUsed = 'wasm';
+        let session = null;
+
+        // Try WebGPU first
+        if (navigator.gpu) {
+          try {
+            log("Attempting to initialize session with WebGPU EP...");
+            session = await ort.InferenceSession.create('/models/detectra.onnx', {
+              executionProviders: ['webgpu']
+            });
+            epUsed = 'webgpu';
+            log("✓ Successfully initialized with WebGPU EP!");
+          } catch (gpuErr) {
+            log("WebGPU not available or failed: " + gpuErr.message + ". Falling back to WASM.");
+          }
+        }
+
+        if (!session) {
+          log("Initializing session with WASM EP...");
+          session = await ort.InferenceSession.create('/models/detectra.onnx', {
+            executionProviders: ['wasm']
+          });
+          epUsed = 'wasm';
+          log("✓ Successfully initialized with WASM EP!");
+        }
+
+        statusEl.innerHTML = `Model Loaded successfully! (Active EP: <strong style="color:#a3e635">${epUsed.toUpperCase()}</strong>)`;
+
+        for (const item of testImages) {
+          log(`\nEvaluating: ${item.name} (${item.url})...`);
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise((res, rej) => {
+            img.onload = res;
+            img.onerror = rej;
+            img.src = item.url;
+          });
+
+          const t0 = performance.now();
+          const inputData = await preprocessImage(img);
+          const inputTensor = new ort.Tensor('float32', inputData, [1, 3, 384, 384]);
+          const feeds = { [session.inputNames[0]]: inputTensor };
+          const outputs = await session.run(feeds);
+          const t1 = performance.now();
+
+          const logit = Number(outputs[session.outputNames[0]].data[0]);
+          const prob = sigmoid(logit);
+          const { status, badgeClass, conf } = classify(prob);
+
+          log(`  Raw Logit: ${logit.toFixed(4)}`);
+          log(`  AI Probability: ${(prob * 100).toFixed(2)}%`);
+          log(`  Classification: ${status} (Confidence: ${(conf * 100).toFixed(1)}%)`);
+          log(`  Inference Latency: ${(t1 - t0).toFixed(1)} ms`);
+
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>${item.name}</h3>
+              <span class="badge ${badgeClass}">${status}</span>
+            </div>
+            <div>
+              <img src="${item.url}" class="thumb">
+            </div>
+            <div style="margin-top: 10px; font-size: 13px;">
+              <div><strong>Raw Logit:</strong> ${logit.toFixed(4)}</div>
+              <div><strong>AI-Generated Probability:</strong> ${(prob * 100).toFixed(2)}%</div>
+              <div><strong>Confidence:</strong> ${(conf * 100).toFixed(1)}%</div>
+              <div><strong>Latency:</strong> ${(t1 - t0).toFixed(1)} ms (EP: ${epUsed})</div>
+              <div><strong>Expected Type:</strong> ${item.expected}</div>
+            </div>
+          `;
+          resultsEl.appendChild(card);
+        }
+
+        log("\n✓ All 3 test images evaluated successfully in the browser!");
+        document.body.setAttribute('data-test-complete', 'true');
+      } catch (err) {
+        log("\nFATAL ERROR: " + err.message);
+        statusEl.textContent = "Error: " + err.message;
+      }
+    }
+
+    window.addEventListener('load', runVerification);
+  </script>
+</body>
+</html>

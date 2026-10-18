@@ -64,3 +64,11 @@ ALTER TABLE analysis_history
 
 CREATE INDEX IF NOT EXISTS idx_analysis_history_search
   ON analysis_history USING GIN (search_vector);
+
+-- ── Image Authenticity Layer (Detectra v3) ─────────────────────
+ALTER TABLE analysis_history
+  ADD COLUMN IF NOT EXISTS image_authenticity TEXT,
+  ADD COLUMN IF NOT EXISTS ai_generated_probability NUMERIC,
+  ADD COLUMN IF NOT EXISTS authenticity_confidence NUMERIC,
+  ADD COLUMN IF NOT EXISTS authenticity_model TEXT,
+  ADD COLUMN IF NOT EXISTS authenticity_indicators JSONB;

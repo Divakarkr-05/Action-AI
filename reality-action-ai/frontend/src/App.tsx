@@ -19,6 +19,10 @@ import { LoadingState } from './components/LoadingState';
 import { useAuth } from './contexts/AuthContext';
 import { analyzeReality } from './services/graphql';
 import { saveAnalysisToHistory } from './services/history';
+import {
+  detectImageAuthenticity,
+  type ImageAuthenticityResult,
+} from './services/authenticityDetector';
 import type { AnalysisResult, AppState, ImageFile } from './types';
 
 export default function App() {
@@ -31,6 +35,13 @@ export default function App() {
   const [sessionId] = useState(() => uuidv4());
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Authenticity detector state
+  const [authenticityState, setAuthenticityState] = useState<
+    'idle' | 'checking' | 'checked' | 'unavailable'
+  >('idle');
+  const [authenticityResult, setAuthenticityResult] =
+    useState<ImageAuthenticityResult | null>(null);
 
   const { user } = useAuth();
   const location = useLocation();
@@ -59,6 +70,19 @@ export default function App() {
     setError(null);
     setIsSaved(false);
     setAppState('image-selected');
+
+    // Start authenticity check eagerly in the background (non-blocking)
+    setAuthenticityState('checking');
+    detectImageAuthenticity(img.dataUrl)
+      .then((authRes) => {
+        setAuthenticityResult(authRes);
+        setAuthenticityState(
+          authRes.status === 'UNAVAILABLE' ? 'unavailable' : 'checked',
+        );
+      })
+      .catch(() => {
+        setAuthenticityState('unavailable');
+      });
   }, []);
 
   const handleImageRemove = useCallback(() => {
@@ -66,6 +90,8 @@ export default function App() {
     setResult(null);
     setError(null);
     setIsSaved(false);
+    setAuthenticityState('idle');
+    setAuthenticityResult(null);
     setAppState('empty');
   }, []);
 
@@ -96,10 +122,25 @@ export default function App() {
     setIsSaved(false);
 
     try {
+      // Ensure authenticity detection has completed or run
+      let currentAuth = authenticityResult;
+      if (!currentAuth || currentAuth.status === 'UNAVAILABLE') {
+        try {
+          currentAuth = await detectImageAuthenticity(image.dataUrl);
+          setAuthenticityResult(currentAuth);
+          setAuthenticityState(
+            currentAuth.status === 'UNAVAILABLE' ? 'unavailable' : 'checked',
+          );
+        } catch {
+          // Failure in authenticity detector should never block analysis
+        }
+      }
+
       const analysisResult = await analyzeReality(
         image.dataUrl,
         question || undefined,
         sessionId,
+        currentAuth,
       );
       setResult(analysisResult);
       setAppState('complete');
@@ -128,7 +169,7 @@ export default function App() {
       );
       setAppState('error');
     }
-  }, [image, question, user, sessionId]);
+  }, [image, question, user, sessionId, authenticityResult]);
 
   const handleReset = useCallback(() => {
     setImage(null);
@@ -137,6 +178,8 @@ export default function App() {
     setQuestion('');
     setIsSaved(false);
     setIsSaving(false);
+    setAuthenticityState('idle');
+    setAuthenticityResult(null);
     setAppState('empty');
   }, []);
 
@@ -232,7 +275,26 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
             {/* LEFT: Image uploader */}
             <div className="card p-5">
-              <h2 className="section-title mb-4">Image</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="section-title">Image</h2>
+                {authenticityState === 'checking' && (
+                  <div className="flex items-center gap-1.5 text-[11px] font-mono text-cyan-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                    <span>Checking image authenticity...</span>
+                  </div>
+                )}
+                {authenticityState === 'checked' && (
+                  <div className="flex items-center gap-1.5 text-[11px] font-mono text-emerald-400/90">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span>Authenticity checked</span>
+                  </div>
+                )}
+                {authenticityState === 'unavailable' && (
+                  <div className="flex items-center gap-1.5 text-[11px] font-mono text-white/30">
+                    <span>Authenticity check unavailable</span>
+                  </div>
+                )}
+              </div>
               <ImageUploader
                 image={image}
                 onImageSelect={handleImageSelect}

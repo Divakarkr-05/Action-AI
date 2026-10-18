@@ -62,6 +62,77 @@ export function AnalysisPanel({
         <SafetyWarning warning={result.safetyWarning} />
       )}
 
+      {/* Image Authenticity Card */}
+      {result.imageAuthenticity && result.imageAuthenticity !== 'UNAVAILABLE' ? (
+        <div className="p-3.5 rounded-lg border border-white/[0.08] bg-white/[0.02]">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-white/50 font-semibold">
+              IMAGE AUTHENTICITY
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  result.imageAuthenticity === 'LIKELY_REAL'
+                    ? 'bg-emerald-400'
+                    : result.imageAuthenticity === 'LIKELY_AI_GENERATED'
+                    ? 'bg-amber-400'
+                    : 'bg-blue-400'
+                }`}
+              />
+              <span
+                className={`font-mono text-xs font-semibold ${
+                  result.imageAuthenticity === 'LIKELY_REAL'
+                    ? 'text-emerald-400'
+                    : result.imageAuthenticity === 'LIKELY_AI_GENERATED'
+                    ? 'text-amber-400'
+                    : 'text-blue-400'
+                }`}
+              >
+                {result.imageAuthenticity === 'LIKELY_REAL'
+                  ? 'LIKELY REAL'
+                  : result.imageAuthenticity === 'LIKELY_AI_GENERATED'
+                  ? 'LIKELY AI-GENERATED'
+                  : 'UNCERTAIN'}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+            <div className="p-2 rounded bg-black/30 border border-white/[0.04]">
+              <div className="text-[10px] text-white/40 font-mono uppercase mb-0.5">
+                AI-generated probability
+              </div>
+              <div className="font-mono text-base font-medium text-white/90">
+                {result.aiGeneratedProbability !== null &&
+                result.aiGeneratedProbability !== undefined
+                  ? `${Math.round(result.aiGeneratedProbability * 100)}%`
+                  : 'N/A'}
+              </div>
+            </div>
+            <div className="p-2 rounded bg-black/30 border border-white/[0.04]">
+              <div className="text-[10px] text-white/40 font-mono uppercase mb-0.5">
+                Detector
+              </div>
+              <div className="font-mono text-xs font-medium text-white/80 mt-1">
+                {result.authenticityModel || 'Detectra v3'}
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-white/40 font-mono leading-relaxed">
+            AI-image detection is probabilistic and can be affected by compression,
+            resizing, screenshots, editing, camera pipelines, and unseen generators.
+          </p>
+        </div>
+      ) : result.imageAuthenticity === 'UNAVAILABLE' ? (
+        <div className="p-3 rounded-lg border border-white/[0.06] bg-white/[0.01] flex items-center justify-between text-xs font-mono text-white/40">
+          <span>AUTHENTICITY CHECK UNAVAILABLE</span>
+          <span className="text-[10px] text-white/30">
+            Continued with normal analysis
+          </span>
+        </div>
+      ) : null}
+
       {/* Grounding references if retrieved by RAG */}
       {result.groundingSources && result.groundingSources.length > 0 && (
         <div className="p-3.5 rounded-lg border border-lime-400/20 bg-lime-400/[0.04]">

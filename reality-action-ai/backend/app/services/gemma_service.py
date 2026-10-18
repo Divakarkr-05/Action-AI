@@ -166,6 +166,7 @@ class GemmaService:
         image_b64: str,
         question: Optional[str] = None,
         session_id: Optional[str] = None,
+        authenticity_context: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Analyze a real-world image using Gemma 4 multimodal chat completion.
@@ -208,6 +209,8 @@ class GemmaService:
 
         # Compose final user text with technical grounding references
         prompt_parts = []
+        if authenticity_context:
+            prompt_parts.append(authenticity_context)
         if rag_prompt_section:
             prompt_parts.append(rag_prompt_section)
         prompt_parts.append(user_prompt_text)

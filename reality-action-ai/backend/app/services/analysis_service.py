@@ -157,6 +157,7 @@ class MockAnalysisService:
         image_b64: str,   # noqa: ARG002 – will be consumed by real service
         question: Optional[str] = None,
         session_id: Optional[str] = None,  # noqa: ARG002
+        authenticity_context: Optional[str] = None,  # noqa: ARG002
     ) -> AnalysisResult:
         # Simulate a short AI processing delay
         await asyncio.sleep(random.uniform(1.2, 2.5))

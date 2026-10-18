@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 class HistoryService:
     """Server-side analysis history CRUD operations."""
 
-    def __init__(self) -> None:
-        self._client = get_supabase_client()
+    @property
+    def _client(self) -> Optional[Any]:
+        return get_supabase_client()
 
     @property
     def is_available(self) -> bool:
@@ -37,6 +38,11 @@ class HistoryService:
         confidence: float,
         safety_warning: Optional[str] = None,
         image_url: Optional[str] = None,
+        image_authenticity: Optional[str] = None,
+        ai_generated_probability: Optional[float] = None,
+        authenticity_confidence: Optional[float] = None,
+        authenticity_model: Optional[str] = None,
+        authenticity_indicators: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Persist a successful analysis result to the database.
@@ -46,25 +52,60 @@ class HistoryService:
             logger.warning("Supabase not configured — skipping history save")
             return None
 
+        base_payload = {
+            "user_id": user_id,
+            "question": question,
+            "what_i_see": what_i_see,
+            "what_is_happening": what_is_happening,
+            "next_action": next_action,
+            "steps": steps,
+            "confidence": confidence,
+            "safety_warning": safety_warning,
+            "image_url": image_url,
+        }
+        full_payload = dict(base_payload)
+        if image_authenticity is not None:
+            full_payload["image_authenticity"] = image_authenticity
+        if ai_generated_probability is not None:
+            full_payload["ai_generated_probability"] = ai_generated_probability
+        if authenticity_confidence is not None:
+            full_payload["authenticity_confidence"] = authenticity_confidence
+        if authenticity_model is not None:
+            full_payload["authenticity_model"] = authenticity_model
+        if authenticity_indicators is not None:
+            full_payload["authenticity_indicators"] = authenticity_indicators
+
         try:
-            result = (
-                self._client.table("analysis_history")
-                .insert({
-                    "user_id": user_id,
-                    "question": question,
-                    "what_i_see": what_i_see,
-                    "what_is_happening": what_is_happening,
-                    "next_action": next_action,
-                    "steps": steps,
-                    "confidence": confidence,
-                    "safety_warning": safety_warning,
-                    "image_url": image_url,
-                })
-                .execute()
-            )
+            logger.info("Supabase INSERT initiating for user_id=%s", user_id)
+            try:
+                result = (
+                    self._client.table("analysis_history")
+                    .insert(full_payload)
+                    .execute()
+                )
+            except Exception as insert_err:
+                err_str = str(insert_err)
+                if any(
+                    col in err_str
+                    for col in ("image_authenticity", "ai_generated_probability", "authenticity_")
+                ):
+                    logger.warning(
+                        "Supabase analysis_history table does not yet have authenticity columns. "
+                        "Retrying with base payload. Please apply the migration script."
+                    )
+                    result = (
+                        self._client.table("analysis_history")
+                        .insert(base_payload)
+                        .execute()
+                    )
+                else:
+                    raise insert_err
+
+            inserted_id = result.data[0].get("id") if result.data else None
+            logger.info("Supabase INSERT completed: row_id=%s", inserted_id)
             return result.data[0] if result.data else None
-        except Exception:
-            logger.exception("Failed to save analysis to history")
+        except Exception as exc:
+            logger.error("Failed to save analysis to history: %s", exc)
             return None
 
     async def get_user_history(
@@ -82,6 +123,7 @@ class HistoryService:
             return []
 
         try:
+            logger.info("Supabase SELECT initiating for user_id=%s (limit=%d, offset=%d)", user_id, limit, offset)
             query = (
                 self._client.table("analysis_history")
                 .select("*")
@@ -101,9 +143,11 @@ class HistoryService:
                 )
 
             result = query.execute()
+            count = len(result.data) if result.data else 0
+            logger.info("Supabase SELECT completed: retrieved %d rows for user_id=%s", count, user_id)
             return result.data or []
-        except Exception:
-            logger.exception("Failed to fetch user history")
+        except Exception as exc:
+            logger.error("Failed to fetch user history: %s", exc)
             return []
 
     async def get_analysis_by_id(

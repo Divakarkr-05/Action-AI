@@ -157,6 +157,7 @@ class SarvamService:
         image_b64: str,
         question: Optional[str] = None,
         session_id: Optional[str] = None,
+        authenticity_context: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Analyze a real-world image using Sarvam AI multimodal completion.
@@ -197,6 +198,8 @@ class SarvamService:
         grounding_sources = list(dict.fromkeys(c.source for c in retrieved_chunks))
 
         prompt_parts = []
+        if authenticity_context:
+            prompt_parts.append(authenticity_context)
         if rag_prompt_section:
             prompt_parts.append(rag_prompt_section)
         prompt_parts.append(user_prompt_text)

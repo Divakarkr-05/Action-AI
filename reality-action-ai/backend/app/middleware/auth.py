@@ -51,18 +51,20 @@ def get_user_id_from_request(request: Request) -> Optional[str]:
                 "verify_signature": False,  # Supabase handles token validity
                 "verify_exp": True,
             },
-            algorithms=["HS256"],
+            algorithms=["HS256", "RS256", "ES256", "EdDSA"],
         )
         user_id = payload.get("sub")
         if user_id:
+            logger.info("Successfully extracted authenticated user_id=%s from JWT", user_id)
             return str(user_id)
+        logger.warning("JWT decoded but missing 'sub' claim")
         return None
     except jwt.ExpiredSignatureError:
-        logger.warning("Expired JWT token")
+        logger.warning("Expired JWT token received in Authorization header")
         return None
-    except jwt.InvalidTokenError:
-        logger.warning("Invalid JWT token")
+    except jwt.InvalidTokenError as ite:
+        logger.warning("Invalid JWT token received: %s", type(ite).__name__)
         return None
-    except Exception:
-        logger.exception("Unexpected error decoding JWT")
+    except Exception as exc:
+        logger.error("Unexpected error decoding JWT: %s", exc)
         return None

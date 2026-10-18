@@ -26,6 +26,21 @@ class AnalysisResult(BaseModel):
         default_factory=list,
         description="Knowledge corpus source files retrieved and used for grounding.",
     )
+    image_authenticity: Optional[str] = Field(
+        None, description="Authenticity classification (LIKELY_REAL, LIKELY_AI_GENERATED, UNCERTAIN, UNAVAILABLE)."
+    )
+    ai_generated_probability: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Estimated probability of image being AI-generated."
+    )
+    authenticity_confidence: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Confidence in authenticity classification."
+    )
+    authenticity_model: Optional[str] = Field(
+        None, description="Model used for authenticity check (Detectra v3)."
+    )
+    authenticity_indicators: Optional[List[str]] = Field(
+        default_factory=list, description="Authenticity indicators."
+    )
 
 
 class AnalyzeInput(BaseModel):
@@ -33,6 +48,11 @@ class AnalyzeInput(BaseModel):
 
     image_b64: str = Field(..., description="Base-64 encoded image data.")
     question: Optional[str] = Field(None, description="Optional user question.")
+    image_authenticity: Optional[str] = Field(None)
+    ai_generated_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
+    authenticity_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    authenticity_model: Optional[str] = Field(None)
+    authenticity_indicators: Optional[List[str]] = Field(default_factory=list)
 
 
 class FollowUpResult(BaseModel):

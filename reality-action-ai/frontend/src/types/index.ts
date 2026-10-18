@@ -7,6 +7,21 @@
 
 // ── Core domain types ─────────────────────────────────────────────────────
 
+export type AuthenticityStatus =
+  | 'LIKELY_REAL'
+  | 'LIKELY_AI_GENERATED'
+  | 'UNCERTAIN'
+  | 'UNAVAILABLE';
+
+export interface ImageAuthenticityResult {
+  status: AuthenticityStatus;
+  aiGeneratedProbability: number | null;
+  confidence: number | null;
+  model: string;
+  indicators: string[];
+  error?: string | null;
+}
+
 export interface AnalysisResult {
   whatISee: string;
   whatIsHappening: string;
@@ -15,6 +30,11 @@ export interface AnalysisResult {
   confidence: number;
   safetyWarning: string | null;
   groundingSources?: string[] | null;
+  imageAuthenticity?: AuthenticityStatus | null;
+  aiGeneratedProbability?: number | null;
+  authenticityConfidence?: number | null;
+  authenticityModel?: string | null;
+  authenticityIndicators?: string[] | null;
 }
 
 export interface FollowUpResult {
@@ -38,6 +58,11 @@ export interface ChatMessage {
 export interface AnalyzeInput {
   image: string;       // base-64 data URL
   question?: string;
+  imageAuthenticity?: AuthenticityStatus | null;
+  aiGeneratedProbability?: number | null;
+  authenticityConfidence?: number | null;
+  authenticityModel?: string | null;
+  authenticityIndicators?: string[] | null;
 }
 
 export interface FollowUpInput {
